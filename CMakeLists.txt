@@ -4,6 +4,14 @@ project(reccs)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Add the library directory
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/lib)
+
+# If you have source files in the lib directory that need to be compiled
+# file(GLOB LIB_SOURCES "lib/*.cpp")
+# add_library(reccs_lib ${LIB_SOURCES})
+# target_link_libraries(reccs reccs_lib)
+
 # Add the executable
 add_executable(reccs app/reccs.cpp)
 
