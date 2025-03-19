@@ -68,4 +68,17 @@ public:
         return neighbors;
     }
 
+    // Get the number of edges in the graph
+    size_t edge_count() const {
+        size_t count = 0;
+        for (const auto& edges : adjacency_list) {
+            count += edges.size();
+        }
+        return count;
+    }
+
+    // Get the number of nodes in the graph
+    size_t node_count() const {
+        return nodes.size();
+    }
 };

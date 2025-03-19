@@ -1,10 +1,10 @@
 #pragma once
 
 #include <iostream>
+#include <fstream>
+#include <sstream>
 #include "data_structures/graph.h"
 #include "data_structures/clustering.h"
-
-// namespace reccs {
 
 class graph_io {
 public:
@@ -13,19 +13,19 @@ public:
      * Each line contains: source_id \t target_id
      * 
      * @param filepath Path to the TSV file
-     * @return Graph object constructed from the edgelist
+    static reccs::Graph load_graph_from_tsv(const std::string& filepath) {
      */
-    static Graph load_graph_from_tsv(const std::string& filepath) {
+    static Graph<int> load_graph_from_tsv(const std::string& filepath) {
         std::ifstream file(filepath);
         if (!file.is_open()) {
             throw std::runtime_error("Could not open file: " + filepath);
         }
         
-        Graph graph;
+        Graph<int> graph;
         std::string line;
         while (std::getline(file, line)) {
             std::istringstream iss(line);
-            node_id_t src, dst;
+            int src, dst;
             if (!(iss >> src >> dst)) {
                 continue; // Skip malformed lines
             }
@@ -40,7 +40,7 @@ public:
      * Each line contains: node_id \t cluster_id
      * 
      * @param filepath Path to the TSV file
-     * @return Clustering object mapping nodes to clusters
+    static reccs::Clustering load_clustering_from_tsv(const std::string& filepath) {
      */
     static Clustering load_clustering_from_tsv(const std::string& filepath) {
         std::ifstream file(filepath);
@@ -52,16 +52,14 @@ public:
         std::string line;
         while (std::getline(file, line)) {
             std::istringstream iss(line);
-            node_id_t node_id;
-            cluster_id_t cluster_id;
+            int node_id;
+            int cluster_id;
             if (!(iss >> node_id >> cluster_id)) {
                 continue; // Skip malformed lines
             }
             clustering.add_node_to_cluster(node_id, cluster_id);
         }
-        
+
         return clustering;
     }
 };
-
-// } // namespace reccs

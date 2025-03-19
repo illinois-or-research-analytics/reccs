@@ -66,6 +66,19 @@ public:
     void clear() {
         node_to_cluster.clear();
     }
+
+    /**
+     * @brief Get the number of unique clusters.
+     * 
+     * @return The number of unique clusters.
+     */
+    int get_num_clusters() {
+        std::unordered_set<int> clusters;
+        for (const auto& [node, cluster] : node_to_cluster) {
+            clusters.insert(cluster);
+        }
+        return clusters.size();
+    }
 };
 
 // } // namespace reccs
