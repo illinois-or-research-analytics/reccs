@@ -13,5 +13,5 @@ make
 
 Then run using the following command:
 ```
-./reccs
+./reccs <edgelist tsv> <clustering tsv>
 ```
