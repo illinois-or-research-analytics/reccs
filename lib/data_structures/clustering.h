@@ -21,6 +21,20 @@ public:
     Clustering() = default;
 
     /**
+     * @brief Get all nodes that have been assigned to clusters.
+     * 
+     * @return A vector containing all node IDs with cluster assignments.
+     */
+    std::vector<int> get_nodes() const {
+        std::vector<int> nodes;
+        nodes.reserve(node_to_cluster.size());
+        for (const auto& [node_id, _] : node_to_cluster) {
+            nodes.push_back(node_id);
+        }
+        return nodes;
+    }
+
+    /**
      * @brief Adds a node to a specific cluster.
      * 
      * @param node_id The ID of the node to add.
@@ -78,6 +92,36 @@ public:
             clusters.insert(cluster);
         }
         return clusters.size();
+    }
+
+    /**
+     * @brief Get all singleton nodes (nodes in their own single-node cluster).
+     * 
+     * @return A vector of node IDs that are singletons.
+     */
+    std::vector<int> get_singletons() const {
+        std::vector<int> singletons;
+        std::unordered_map<int, std::vector<int>> cluster_to_nodes;
+        
+        // Group nodes by cluster
+        for (const auto& [node_id, cluster_id] : node_to_cluster) {
+            cluster_to_nodes[cluster_id].push_back(node_id);
+        }
+        
+        // Find clusters with only one node
+        for (const auto& [cluster_id, nodes] : cluster_to_nodes) {
+            if (nodes.size() == 1) {
+                singletons.push_back(nodes[0]);
+            }
+        }
+        
+        return singletons;
+    }
+
+    void remove_singletons() {
+        for (int node_id : get_singletons()) {
+            node_to_cluster.erase(node_id);
+        }
     }
 };
 

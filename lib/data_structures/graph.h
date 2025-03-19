@@ -81,4 +81,20 @@ public:
     size_t node_count() const {
         return nodes.size();
     }
+
+    // Compute the induced subgraph on a set of nodes
+    Graph induced_subgraph(const std::vector<T>& nodes) const {
+        Graph subgraph;
+        for (const T& node : nodes) {
+            subgraph.add_node(node);
+        }
+        for (const T& node : nodes) {
+            for (const T& neighbor : get_neighbors(node)) {
+                if (subgraph.has_node(neighbor)) {
+                    subgraph.add_edge(node, neighbor);
+                }
+            }
+        }
+        return subgraph;
+    }
 };
