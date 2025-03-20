@@ -30,3 +30,33 @@ add_executable(reccs app/reccs.cpp)
 # Optional: Enable testing
 # enable_testing()
 # add_test(NAME reccs_test COMMAND reccs)
+
+# Find required packages
+find_package(Boost REQUIRED COMPONENTS graph random)
+find_package(PkgConfig REQUIRED)
+
+# Find graph-tool using pkg-config
+pkg_check_modules(GRAPHTOOL REQUIRED graph-tool-2.0)
+
+# Include directories
+include_directories(
+    ${Boost_INCLUDE_DIRS}
+    ${GRAPHTOOL_INCLUDE_DIRS}
+)
+
+# Add executable
+add_executable(sbm_generator sbm.cpp)
+
+# Link libraries
+target_link_libraries(sbm_generator
+    ${Boost_LIBRARIES}
+    ${GRAPHTOOL_LIBRARIES}
+)
+
+# Set compiler flags
+target_compile_options(sbm_generator PRIVATE
+    -O3
+    -Wall
+    -Wextra
+    ${GRAPHTOOL_CFLAGS_OTHER}
+)

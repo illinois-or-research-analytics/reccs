@@ -1,0 +1,6 @@
+[submodule "extlib/graph-tool"]
+	path = extlib/graph-tool
+	url = https://git.skewed.de/count0/graph-tool.git
+[submodule "extlib/boost"]
+	path = extlib/boost
+	url = https://github.com/boostorg/boost.git

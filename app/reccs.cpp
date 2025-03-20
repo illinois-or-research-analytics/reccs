@@ -45,10 +45,15 @@ int main(int argc, char* argv[]) {
     std::cout << std::endl;
     std::cout << "Removing singletons..." << std::endl;
 
+    // Fetch singletons
+    std::vector<int> singletons = clustering.get_singletons();
+
     // Extract subgraph
-    Graph<int> subgraph = SubgraphExtractor::extract_clustered_subgraph(graph, clustering);
-    std::cout << "Number of nodes in subgraph: " << subgraph.node_count() << std::endl;
-    std::cout << "Number of edges in subgraph: " << subgraph.edge_count() << std::endl;
+    Graph<int> clustered_subgraph = SubgraphExtractor::extract_clustered_subgraph(graph, clustering);
+    std::cout << "Number of nodes in subgraph: " << clustered_subgraph.node_count() << std::endl;
+    std::cout << "Number of edges in subgraph: " << clustered_subgraph.edge_count() << std::endl;
+    std::cout << "Number of singletons: " << singletons.size() << std::endl;
+    std::cout << "Number of clusters remaining: " << clustering.get_num_clusters() << std::endl;
 
     return 0;
 }
