@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <stdexcept>
 #include <algorithm>
+#include <limits>
 
 template <typename T>
 class Graph {
@@ -41,6 +42,7 @@ public:
         
         // Add edge
         adjacency_list[from_idx].push_back(Edge(to_idx));
+        adjacency_list[to_idx].push_back(Edge(from_idx)); // For undirected graph
     }
     
     // Check if a node exists
@@ -75,7 +77,7 @@ public:
         for (const auto& edges : adjacency_list) {
             count += edges.size();
         }
-        return count;
+        return count / 2; // Each edge is counted twice in an undirected graph
     }
 
     // Get the number of nodes in the graph
@@ -84,15 +86,15 @@ public:
     }
 
     // Compute the induced subgraph on a set of nodes
-    Graph induced_subgraph(const std::vector<T>& nodes) const {
-        Graph subgraph;
+    Graph<T> induced_subgraph(const std::vector<T>& nodes) const {
+        Graph<T> subgraph = Graph<T>();
         for (const T& node : nodes) {
             subgraph.add_node(node);
         }
         for (const T& node : nodes) {
             for (const T& neighbor : get_neighbors(node)) {
                 if (subgraph.has_node(neighbor)) {
-                    subgraph.add_edge(node, neighbor);
+                    subgraph.adjacency_list[subgraph.node_to_index[node]].push_back(Edge(subgraph.node_to_index[neighbor]));
                 }
             }
         }
@@ -136,6 +138,15 @@ public:
                 --i; // Adjust index after removal
             }
         }
+    }
+
+    // Get the minimum degree of the graph
+    int get_minimum_degree() const {
+        int min_degree = std::numeric_limits<int>::max();
+        for (const auto& edges : adjacency_list) {
+            min_degree = std::min(min_degree, static_cast<int>(edges.size()));
+        }
+        return min_degree;
     }
 
     // Node iterator implementation

@@ -96,14 +96,22 @@ int main(int argc, char* argv[]) {
         std::cout << "Computing Stochastic Block Model..." << std::endl;
     }
 
+    
+
     // Generate graph and print the graph statistics
     std::vector<int> block_assignments = clustering.get_block_assignments();
     Graph<int> sbm_graph = sbm.generate_graph(clustered_subgraph.node_count(), block_assignments);
-    sbm_graph.remove_floating_nodes();
+    if (verbose) {
+        std::cout << "Number of nodes in SBM graph: " << sbm_graph.node_count() << std::endl;
+        std::cout << "Number of edges in SBM graph: " << sbm_graph.edge_count() << std::endl;
+    }
+
+    // Clean the graph
     sbm_graph.remove_self_loops();
     sbm_graph.remove_parallel_edges();
     if (verbose) {
-        std::cout << "Graph generated from SBM." << std::endl;
+        std::cout << std::endl;
+        std::cout << "After cleaning the graph." << std::endl;
         std::cout << "Number of nodes in SBM graph: " << sbm_graph.node_count() << std::endl;
         std::cout << "Number of edges in SBM graph: " << sbm_graph.edge_count() << std::endl;
     }
@@ -116,8 +124,17 @@ int main(int argc, char* argv[]) {
         sbm_clustering.add_node_to_cluster(node_id, cluster_id);
     }
     if (verbose) {
+        std::cout << std::endl;
         std::cout << "Clustering created for SBM graph." << std::endl;
     }
+
+    Graph<int> sbm_cluster_0 = sbm_clustering.get_subgraph(sbm_graph, 0);
+    Graph<int> real_cluster_0 = clustering.get_subgraph(clustered_subgraph, 0);
+
+    std::cout << "Cluster 0 in SBM graph: " << sbm_cluster_0.node_count() << " nodes, " << sbm_cluster_0.edge_count() << " edges." << std::endl;
+    std::cout << "Minimum degree in SBM graph: " << sbm_cluster_0.get_minimum_degree() << std::endl;
+    std::cout << "Cluster 0 in real graph: " << real_cluster_0.node_count() << " nodes, " << real_cluster_0.edge_count() << " edges." << std::endl;
+    std::cout << "Minimum degree in real graph: " << real_cluster_0.get_minimum_degree() << std::endl;
 
     return 0;
 }

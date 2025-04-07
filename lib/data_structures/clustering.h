@@ -157,6 +157,19 @@ public:
         
         return assignments;
     }
+
+    /**
+     * @brief Get the subgraph corresponding to a specific cluster.
+     * 
+     * @param graph The original graph.
+     * @param cluster_id The ID of the cluster to extract.
+     * @return A subgraph containing only nodes in the specified cluster.
+     */
+    Graph<int> get_subgraph(const Graph<int>& graph, int cluster_id) const {
+        std::vector<int> cluster_nodes = get_clusters()[cluster_id];
+        Graph<int> subgraph = graph.induced_subgraph(cluster_nodes);
+        return subgraph;
+    }
 };
 
 #endif // CLUSTERING_H
