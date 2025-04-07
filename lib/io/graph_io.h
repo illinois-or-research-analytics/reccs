@@ -18,7 +18,7 @@ public:
      * @param filepath Path to the TSV file
     static reccs::Graph load_graph_from_tsv(const std::string& filepath) {
      */
-    static igraph_t load_graph_from_tsv(const std::string& filepath, std::map<int, int>& id_to_index) {
+    static Graph load_graph_from_tsv(const std::string& filepath, std::unordered_map<int, int>& id_to_index) {
         // Vectors to store edges
         std::vector<int> from_nodes;
         std::vector<int> to_nodes;

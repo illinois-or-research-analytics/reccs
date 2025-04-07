@@ -8,7 +8,7 @@ public:
      * @param clustering The clustering of the nodes.
      * @return A subgraph containing only nodes that are assigned to clusters.
      */
-    static Graph get_clustered_subgraph(const Graph& graph, Clustering& clustering, std::map<int, int>& id_to_index) {
+    static Graph get_clustered_subgraph(const Graph& graph, Clustering& clustering, std::unordered_map<int, int>& id_to_index) {
         // Remove singletons from the clustering
         clustering.remove_singletons();
         

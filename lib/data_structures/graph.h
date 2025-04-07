@@ -31,7 +31,7 @@ public:
     /**
     * @brief Contstructor from an igraph object.
      */
-    Graph(const igraph_t& g) : graph(g), id_to_index(id_to_index) {
+    Graph(const igraph_t& g, std::unordered_map<int, int> id_to_index) : graph(g), id_to_index(id_to_index) {
         num_nodes = igraph_vcount(&graph);
         num_edges = igraph_ecount(&graph);
 
@@ -141,7 +141,12 @@ public:
      */
     int get_degree(int id) const {
         int index = get_index(id);
-        return igraph_degree(&graph, index, IGRAPH_ALL, IGRAPH_NO_LOOPS);
+        igraph_vector_int_t degrees;
+        igraph_vector_int_init(&degrees, 1);
+        igraph_degree(&graph, &degrees, igraph_vss_1(index), IGRAPH_ALL, IGRAPH_NO_LOOPS);
+        int result = VECTOR(degrees)[0];
+        igraph_vector_int_destroy(&degrees);
+        return result;
     }
 
     /**
@@ -158,7 +163,7 @@ public:
         
         std::vector<int> result;
         for (int i = 0; i < igraph_vector_int_size(&neighbors); ++i) {
-            result.push_back(index_to_id[VECTOR(neighbors)[i]]);
+            result.push_back(index_to_id.at(VECTOR(neighbors)[i]));
         }
         
         igraph_vector_int_destroy(&neighbors);

@@ -9,7 +9,7 @@
 
 #include "io/graph_io.h"
 #include "utils/subgraph_extractor.h"
-#include "algorithm/sbm.h"
+// #include "algorithm/sbm.h"
 
 
 int main(int argc, char* argv[]) {
@@ -56,7 +56,7 @@ int main(int argc, char* argv[]) {
     graph_io io;
 
     // Read graph
-    std::map<int, int> id_to_index; // Map to store original IDs to contiguous indices
+    std::unordered_map<int, int> id_to_index; // Map to store original IDs to contiguous indices
     auto graph = io.load_graph_from_tsv(edgelist_file, id_to_index);
     
     // Read clustering
