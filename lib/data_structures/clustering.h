@@ -5,8 +5,6 @@
 #include <vector>
 #include <stdexcept>
 
-// namespace reccs {
-
 /**
  * @brief Class that efficiently stores mappings from node IDs to cluster IDs.
  */
@@ -118,13 +116,47 @@ public:
         return singletons;
     }
 
+    /**
+     * @brief Remove all singleton nodes from the clustering.
+     */
     void remove_singletons() {
         for (int node_id : get_singletons()) {
             node_to_cluster.erase(node_id);
         }
     }
-};
 
-// } // namespace reccs
+    /**
+     * @brief Get all clusters and their member nodes.
+     * 
+     * @return An unordered map mapping cluster IDs to vectors of node IDs.
+     */
+    std::unordered_map<int, std::vector<int>> get_clusters() const {
+        std::unordered_map<int, std::vector<int>> cluster_to_nodes;
+        
+        // Group nodes by cluster
+        for (const auto& [node_id, cluster_id] : node_to_cluster) {
+            cluster_to_nodes[cluster_id].push_back(node_id);
+        }
+        
+        return cluster_to_nodes;
+    }
+    
+    /**
+     * @brief Return a vector for cluster assignments
+     * This is for SBM input
+     * 
+     * @return Cluster assignments vector
+     */
+    std::vector<int> get_block_assignments() const {
+        std::vector<int> assignments;
+        assignments.reserve(node_to_cluster.size());
+        
+        for (const auto& [node_id, cluster_id] : node_to_cluster) {
+            assignments.emplace_back(cluster_id);
+        }
+        
+        return assignments;
+    }
+};
 
 #endif // CLUSTERING_H

@@ -97,4 +97,23 @@ public:
         }
         return subgraph;
     }
+
+    // Node iterator implementation
+    class NodeIterator {
+    private:
+        typename std::vector<T>::const_iterator it;
+
+    public:
+        NodeIterator(typename std::vector<T>::const_iterator it) : it(it) {}
+        
+        const T& operator*() const { return *it; }
+        NodeIterator& operator++() { ++it; return *this; }
+        NodeIterator operator++(int) { NodeIterator tmp = *this; ++it; return tmp; }
+        bool operator==(const NodeIterator& other) const { return it == other.it; }
+        bool operator!=(const NodeIterator& other) const { return it != other.it; }
+    };
+
+    // Methods to get iterators
+    NodeIterator begin() const { return NodeIterator(nodes.begin()); }
+    NodeIterator end() const { return NodeIterator(nodes.end()); }
 };
