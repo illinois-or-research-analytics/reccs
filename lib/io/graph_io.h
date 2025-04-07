@@ -3,6 +3,9 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <set> 
+#include <map>
+
 #include "data_structures/graph.h"
 #include "data_structures/clustering.h"
 
@@ -15,23 +18,63 @@ public:
      * @param filepath Path to the TSV file
     static reccs::Graph load_graph_from_tsv(const std::string& filepath) {
      */
-    static Graph<int> load_graph_from_tsv(const std::string& filepath) {
+    static igraph_t load_graph_from_tsv(const std::string& filepath) {
+        // Vectors to store edges
+        std::vector<int> from_nodes;
+        std::vector<int> to_nodes;
+        std::set<int> unique_nodes;  // To track all unique node IDs
+        
+        // Read the TSV file
         std::ifstream file(filepath);
         if (!file.is_open()) {
-            throw std::runtime_error("Could not open file: " + filepath);
+            std::cerr << "Failed to open file: " << filepath << std::endl;
+            exit(EXIT_FAILURE);
         }
         
-        Graph<int> graph;
         std::string line;
         while (std::getline(file, line)) {
             std::istringstream iss(line);
-            int src, dst;
-            if (!(iss >> src >> dst)) {
-                continue; // Skip malformed lines
+            int from, to;
+            
+            // Parse TSV line (tab-separated values)
+            if (!(iss >> from >> to)) {
+                std::cerr << "Error parsing line: " << line << std::endl;
+                continue;
             }
-            graph.add_edge(src, dst);
+            
+            // Store edge endpoints
+            from_nodes.push_back(from);
+            to_nodes.push_back(to);
+            
+            // Keep track of unique node IDs
+            unique_nodes.insert(from);
+            unique_nodes.insert(to);
+        }
+        file.close();
+        
+        // Create mapping from original IDs to contiguous indices
+        std::map<int, int> id_to_index;
+        int index = 0;
+        for (int id : unique_nodes) {
+            id_to_index[id] = index++;
         }
         
+        // Create igraph edge vector with mapped indices
+        igraph_vector_int_t edges;
+        igraph_vector_int_init(&edges, from_nodes.size() * 2);
+        
+        for (size_t i = 0; i < from_nodes.size(); i++) {
+            VECTOR(edges)[2*i] = id_to_index[from_nodes[i]];
+            VECTOR(edges)[2*i+1] = id_to_index[to_nodes[i]];
+        }
+        
+        // Create the graph
+        igraph_t graph;
+        igraph_create(&graph, &edges, unique_nodes.size(), IGRAPH_UNDIRECTED);
+        
+        // Clean up
+        igraph_vector_int_destroy(&edges);
+
         return graph;
     }
     

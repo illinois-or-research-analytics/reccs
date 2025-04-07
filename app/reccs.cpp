@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <igraph/igraph.h>
 
 #include "io/graph_io.h"
 #include "utils/subgraph_extractor.h"
@@ -12,6 +13,9 @@
 
 
 int main(int argc, char* argv[]) {
+    // Initialize the igraph library
+    igraph_i_set_attribute_table(&igraph_cattribute_table);
+
     // Read command line arguments
     bool verbose = false;
     std::string edgelist_file;
@@ -50,13 +54,9 @@ int main(int argc, char* argv[]) {
 
     // Use graph_io to read the graph and clustering
     graph_io io;
-    
-    // Read the edgelist
-    Graph<int> graph = io.load_graph_from_tsv(edgelist_file);
-    if (!graph.node_count()) {
-        std::cerr << "Error opening edgelist file: " << edgelist_file << std::endl;
-        return 1;
-    }
+
+    // Read graph
+    auto graph = io.load_graph_from_tsv(edgelist_file);
     
     // Read clustering
     auto clustering = io.load_clustering_from_tsv(clustering_file);
@@ -65,76 +65,12 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Print statistics
+    // Print graph and clustering information
     if (verbose) {
-        std::cout << "Number of nodes: " << graph.node_count() << std::endl;
-        std::cout << "Number of edges: " << graph.edge_count() << std::endl;
-        std::cout << "Number of clusters: " << clustering.get_num_clusters() << std::endl;
-
-        std::cout << std::endl;
-        std::cout << "Removing singletons..." << std::endl;
+        std::cout << "Graph loaded with " << igraph_vcount(&graph) << " vertices and "
+                  << igraph_ecount(&graph) << " edges." << std::endl;
+        std::cout << "Clustering loaded with " << clustering.size() << " clusters." << std::endl;
     }
-
-    // Fetch singletons
-    std::vector<int> singletons = clustering.get_singletons();
-
-    // Extract subgraph
-    Graph<int> clustered_subgraph = SubgraphExtractor::extract_clustered_subgraph(graph, clustering);
-
-    // Print clustered subgraph statistics
-    if (verbose) {
-        std::cout << "Number of nodes in subgraph: " << clustered_subgraph.node_count() << std::endl;
-        std::cout << "Number of edges in subgraph: " << clustered_subgraph.edge_count() << std::endl;
-        std::cout << "Number of singletons: " << singletons.size() << std::endl;
-        std::cout << "Number of clusters remaining: " << clustering.get_num_clusters() << std::endl;
-    }
-
-    // Start computing the Stochastic Block Model
-    StochasticBlockModel sbm(clustered_subgraph, clustering);
-    if (verbose) {
-        std::cout << std::endl;
-        std::cout << "Computing Stochastic Block Model..." << std::endl;
-    }
-
-    
-
-    // Generate graph and print the graph statistics
-    std::vector<int> block_assignments = clustering.get_block_assignments();
-    Graph<int> sbm_graph = sbm.generate_graph(clustered_subgraph.node_count(), block_assignments);
-    if (verbose) {
-        std::cout << "Number of nodes in SBM graph: " << sbm_graph.node_count() << std::endl;
-        std::cout << "Number of edges in SBM graph: " << sbm_graph.edge_count() << std::endl;
-    }
-
-    // Clean the graph
-    sbm_graph.remove_self_loops();
-    sbm_graph.remove_parallel_edges();
-    if (verbose) {
-        std::cout << std::endl;
-        std::cout << "After cleaning the graph." << std::endl;
-        std::cout << "Number of nodes in SBM graph: " << sbm_graph.node_count() << std::endl;
-        std::cout << "Number of edges in SBM graph: " << sbm_graph.edge_count() << std::endl;
-    }
-
-    // Create a clustering for the SBM graph
-    Clustering sbm_clustering;
-    for (auto node_it = sbm_graph.begin(); node_it != sbm_graph.end(); ++node_it) {
-        int node_id = *node_it;
-        int cluster_id = block_assignments[node_id];
-        sbm_clustering.add_node_to_cluster(node_id, cluster_id);
-    }
-    if (verbose) {
-        std::cout << std::endl;
-        std::cout << "Clustering created for SBM graph." << std::endl;
-    }
-
-    Graph<int> sbm_cluster_0 = sbm_clustering.get_subgraph(sbm_graph, 0);
-    Graph<int> real_cluster_0 = clustering.get_subgraph(clustered_subgraph, 0);
-
-    std::cout << "Cluster 0 in SBM graph: " << sbm_cluster_0.node_count() << " nodes, " << sbm_cluster_0.edge_count() << " edges." << std::endl;
-    std::cout << "Minimum degree in SBM graph: " << sbm_cluster_0.get_minimum_degree() << std::endl;
-    std::cout << "Cluster 0 in real graph: " << real_cluster_0.node_count() << " nodes, " << real_cluster_0.edge_count() << " edges." << std::endl;
-    std::cout << "Minimum degree in real graph: " << real_cluster_0.get_minimum_degree() << std::endl;
 
     return 0;
 }

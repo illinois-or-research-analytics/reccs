@@ -1,0 +1,6 @@
+[submodule "extlib/igraph-cpp"]
+	path = extlib/igraph-cpp
+	url = https://github.com/igraph/igraph-cpp.git
+[submodule "extlib/igraph"]
+	path = extlib/igraph
+	url = https://github.com/igraph/igraph.git
