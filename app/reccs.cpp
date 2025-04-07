@@ -68,8 +68,8 @@ int main(int argc, char* argv[]) {
 
     // Print graph and clustering information
     if (verbose) {
-        std::cout << "Graph loaded with " << igraph_vcount(&graph) << " vertices and "
-                  << igraph_ecount(&graph) << " edges." << std::endl;
+        std::cout << "Graph loaded with " << graph.get_num_nodes() << " vertices and "
+                  << graph.get_num_edges() << " edges." << std::endl;
         std::cout << "Clustering loaded with " << clustering.get_num_clusters() << " clusters." << std::endl;
     }
 
@@ -82,8 +82,8 @@ int main(int argc, char* argv[]) {
     // Get the clustered subgraph
     auto clustered_subgraph = SubgraphExtractor::get_clustered_subgraph(graph, clustering, id_to_index);
     if (verbose) {
-        std::cout << "Clustered subgraph created with " << igraph_vcount(&clustered_subgraph) << " vertices." << std::endl;
-        std::cout << "Clustered subgraph created with " << igraph_ecount(&clustered_subgraph) << " edges." << std::endl;
+        std::cout << "Clustered subgraph created with " << clustered_subgraph.get_num_nodes() << " vertices." << std::endl;
+        std::cout << "Clustered subgraph created with " << clustered_subgraph.get_num_edges() << " edges." << std::endl;
     }
 
     return 0;

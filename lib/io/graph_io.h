@@ -68,11 +68,14 @@ public:
         }
         
         // Create the graph
-        igraph_t graph;
-        igraph_create(&graph, &edges, unique_nodes.size(), IGRAPH_UNDIRECTED);
+        igraph_t graph_primitive;
+        igraph_create(&graph_primitive, &edges, unique_nodes.size(), IGRAPH_UNDIRECTED);
         
         // Clean up
         igraph_vector_int_destroy(&edges);
+
+        // Create a new Graph object
+        Graph graph(graph_primitive, id_to_index);
 
         return graph;
     }

@@ -6,165 +6,199 @@
 #include <algorithm>
 #include <limits>
 
-template <typename T>
+#include <igraph/igraph.h>
+
+
+/**
+ * @brief Wrapper class for igraph_t to represent a graph.
+ */
 class Graph {
 private:
-    struct Edge {
-        int to;
-        
-        Edge(int to) : to(to) {}
-    };
-    
-    std::unordered_map<T, int> node_to_index;
-    std::vector<T> nodes;
-    std::vector<std::vector<Edge>> adjacency_list;
+    igraph_t graph;  // The underlying igraph object
+    std::unordered_map<int, int> id_to_index;  // Maps original node IDs to contiguous indices
+    std::unordered_map<int, int> index_to_id;  // Maps contiguous indices back to original node IDs
+    int num_nodes;  // Number of nodes in the graph
+    int num_edges;  // Number of edges in the graph
 
 public:
-    Graph() = default;
-    
-    // Add a node to the graph
-    void add_node(const T& node) {
-        if (node_to_index.find(node) == node_to_index.end()) {
-            node_to_index[node] = nodes.size();
-            nodes.push_back(node);
-            adjacency_list.push_back(std::vector<Edge>());
+    /**
+     * @brief Default constructor.
+     */
+    Graph() : num_nodes(0), num_edges(0) {
+        igraph_empty(&graph, 0, IGRAPH_UNDIRECTED);
+    }
+
+    /**
+    * @brief Contstructor from an igraph object.
+     */
+    Graph(const igraph_t& g) : graph(g), id_to_index(id_to_index) {
+        num_nodes = igraph_vcount(&graph);
+        num_edges = igraph_ecount(&graph);
+
+        // Use id_to_index to compute index_to_id
+        index_to_id.reserve(num_nodes);
+        for (const auto& pair : id_to_index) {
+            index_to_id[pair.second] = pair.first;
         }
     }
-    
-    // Add an edge between two nodes
-    void add_edge(const T& from, const T& to) {
-        // Add nodes if they don't exist
-        add_node(from);
-        add_node(to);
+
+    /**
+     * @brief Destructor.
+     */
+    ~Graph() {
+        igraph_destroy(&graph);
+    }
+
+    /**
+     * @brief Get the number of nodes in the graph.
+     * 
+     * @return The number of nodes.
+     */
+    int get_num_nodes() const {
+        return num_nodes;
+    }
+
+    /**
+     * @brief Get the number of edges in the graph.
+     * 
+     * @return The number of edges.
+     */
+    int get_num_edges() const {
+        return num_edges;
+    }
+
+    /**
+     * @brief Get the original node ID for a given index.
+     * 
+     * @param index The index of the node.
+     * @return The original node ID.
+     * @throws std::out_of_range if the index is out of bounds.
+     */
+    int get_original_node_id(int index) const {
+        if (index < 0 || index >= num_nodes) {
+            throw std::out_of_range("Index out of bounds");
+        }
+        return index_to_id.at(index);
+    }
+
+    /**
+     * @brief Get the index for a given original node ID.
+     * 
+     * @param id The original node ID.
+     * @return The index of the node.
+     * @throws std::out_of_range if the ID is not found.
+     */
+    int get_index(int id) const {
+        auto it = id_to_index.find(id);
+        if (it == id_to_index.end()) {
+            throw std::out_of_range("ID not found");
+        }
+        return it->second;
+    }
+
+    /**
+     * @brief Add an edge to the graph.
+     * 
+     * @param from The ID of the source node.
+     * @param to The ID of the target node.
+     */
+    void add_edge(int from, int to) {
+        if (id_to_index.find(from) == id_to_index.end()) {
+            id_to_index[from] = num_nodes++;
+            index_to_id[num_nodes - 1] = from;
+        }
+        if (id_to_index.find(to) == id_to_index.end()) {
+            id_to_index[to] = num_nodes++;
+            index_to_id[num_nodes - 1] = to;
+        }
+        igraph_add_edge(&graph, id_to_index[from], id_to_index[to]);
+        num_edges++;
+    }
+
+    /**
+     * @brief Get the underlying igraph object.
+     * 
+     * @return A reference to the igraph object.
+     */
+    igraph_t& get_igraph() {
+        return graph;
+    }
+
+    /**
+     * @brief Get the underlying igraph object (const version).
+     * 
+     * @return A const reference to the igraph object.
+     */
+    const igraph_t& get_igraph() const {
+        return graph;
+    }
+
+    /**
+     * @brief Get the degree of a node.
+     * 
+     * @param id The ID of the node.
+     * @return The degree of the node.
+     */
+    int get_degree(int id) const {
+        int index = get_index(id);
+        return igraph_degree(&graph, index, IGRAPH_ALL, IGRAPH_NO_LOOPS);
+    }
+
+    /**
+     * @brief Get the neighbors of a node.
+     * 
+     * @param id The ID of the node.
+     * @return A vector of neighbor IDs.
+     */
+    std::vector<int> get_neighbors(int id) const {
+        int index = get_index(id);
+        igraph_vector_int_t neighbors;
+        igraph_vector_int_init(&neighbors, 0);
+        igraph_neighbors(&graph, &neighbors, index, IGRAPH_ALL);
         
-        int from_idx = node_to_index[from];
-        int to_idx = node_to_index[to];
-        
-        // Add edge
-        adjacency_list[from_idx].push_back(Edge(to_idx));
-        adjacency_list[to_idx].push_back(Edge(from_idx)); // For undirected graph
-    }
-    
-    // Check if a node exists
-    bool has_node(const T& node) const {
-        return node_to_index.find(node) != node_to_index.end();
-    }
-    
-    // Get all nodes
-    const std::vector<T>& get_nodes() const {
-        return nodes;
-    }
-    
-    // Get all neighbors of a node
-    std::vector<T> get_neighbors(const T& node) const {
-        if (!has_node(node)) {
-            throw std::runtime_error("Node not found in graph");
+        std::vector<int> result;
+        for (int i = 0; i < igraph_vector_int_size(&neighbors); ++i) {
+            result.push_back(index_to_id[VECTOR(neighbors)[i]]);
         }
         
-        int node_idx = node_to_index.at(node);
-        std::vector<T> neighbors;
+        igraph_vector_int_destroy(&neighbors);
+        return result;
+    }
+
+    /**
+     * @brief Get the induced subgraph from a set of vertices.
+     *
+     * @param vertices A vector of vertex indices.
+     * @return A new Graph object representing the induced subgraph.
+    */
+    Graph get_induced_subgraph(const std::vector<int>& vertices) const {
+        igraph_vs_t vs;
+        igraph_vector_int_t vertex_vector;
+        igraph_vector_int_init(&vertex_vector, vertices.size());
         
-        for (const Edge& edge : adjacency_list[node_idx]) {
-            neighbors.push_back(nodes[edge.to]);
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            VECTOR(vertex_vector)[i] = get_index(vertices[i]);
         }
         
-        return neighbors;
-    }
-
-    // Get the number of edges in the graph
-    size_t edge_count() const {
-        size_t count = 0;
-        for (const auto& edges : adjacency_list) {
-            count += edges.size();
-        }
-        return count / 2; // Each edge is counted twice in an undirected graph
-    }
-
-    // Get the number of nodes in the graph
-    size_t node_count() const {
-        return nodes.size();
-    }
-
-    // Compute the induced subgraph on a set of nodes
-    Graph<T> induced_subgraph(const std::vector<T>& nodes) const {
-        Graph<T> subgraph = Graph<T>();
-        for (const T& node : nodes) {
-            subgraph.add_node(node);
-        }
-        for (const T& node : nodes) {
-            for (const T& neighbor : get_neighbors(node)) {
-                if (subgraph.has_node(neighbor)) {
-                    subgraph.adjacency_list[subgraph.node_to_index[node]].push_back(Edge(subgraph.node_to_index[neighbor]));
-                }
-            }
-        }
-        return subgraph;
-    }
-
-    // Remove parallel edges and self-loops
-    void remove_parallel_edges() {
-        for (size_t i = 0; i < adjacency_list.size(); ++i) {
-            std::unordered_map<int, bool> seen;
-            auto& edges = adjacency_list[i];
-            edges.erase(std::remove_if(edges.begin(), edges.end(), [&](const Edge& edge) {
-                if (seen[edge.to]) {
-                    return true; // Remove this edge
-                }
-                seen[edge.to] = true;
-                return false; // Keep this edge
-            }), edges.end());
-        }
-    }
-
-    // Remove self-loops
-    void remove_self_loops() {
-        for (size_t i = 0; i < adjacency_list.size(); ++i) {
-            auto& edges = adjacency_list[i];
-            edges.erase(std::remove_if(edges.begin(), edges.end(), [&](const Edge& edge) {
-                return edge.to == static_cast<int>(i); // Remove self-loop
-            }), edges.end());
-        }
-    }
-
-    // Remove floating nodes (nodes with no edges)
-    void remove_floating_nodes() {
-        for (size_t i = 0; i < adjacency_list.size(); ++i) {
-            if (adjacency_list[i].empty()) {
-                // Remove node
-                int node_id = nodes[i];
-                node_to_index.erase(node_id);
-                nodes.erase(nodes.begin() + i);
-                adjacency_list.erase(adjacency_list.begin() + i);
-                --i; // Adjust index after removal
-            }
-        }
-    }
-
-    // Get the minimum degree of the graph
-    int get_minimum_degree() const {
-        int min_degree = std::numeric_limits<int>::max();
-        for (const auto& edges : adjacency_list) {
-            min_degree = std::min(min_degree, static_cast<int>(edges.size()));
-        }
-        return min_degree;
-    }
-
-    // Node iterator implementation
-    class NodeIterator {
-    private:
-        typename std::vector<T>::const_iterator it;
-
-    public:
-        NodeIterator(typename std::vector<T>::const_iterator it) : it(it) {}
+        igraph_vs_vector(&vs, &vertex_vector);
         
-        const T& operator*() const { return *it; }
-        NodeIterator& operator++() { ++it; return *this; }
-        NodeIterator operator++(int) { NodeIterator tmp = *this; ++it; return tmp; }
-        bool operator==(const NodeIterator& other) const { return it == other.it; }
-        bool operator!=(const NodeIterator& other) const { return it != other.it; }
-    };
-
-    // Methods to get iterators
-    NodeIterator begin() const { return NodeIterator(nodes.begin()); }
-    NodeIterator end() const { return NodeIterator(nodes.end()); }
+        igraph_t subgraph;
+        igraph_induced_subgraph(&graph, &subgraph, vs, IGRAPH_SUBGRAPH_AUTO);
+        
+        Graph result;
+        result.graph = subgraph;
+        result.num_nodes = vertices.size();
+        result.num_edges = igraph_ecount(&subgraph);
+        
+        // Map original IDs to new indices
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            result.id_to_index[vertices[i]] = i;
+            result.index_to_id[i] = vertices[i];
+        }
+        
+        igraph_vs_destroy(&vs);
+        igraph_vector_int_destroy(&vertex_vector);
+        
+        return result;
+    }
 };
