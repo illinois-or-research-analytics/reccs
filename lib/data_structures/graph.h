@@ -3,6 +3,7 @@
 #include <vector>
 #include <unordered_map>
 #include <stdexcept>
+#include <algorithm>
 
 template <typename T>
 class Graph {
@@ -96,6 +97,45 @@ public:
             }
         }
         return subgraph;
+    }
+
+    // Remove parallel edges and self-loops
+    void remove_parallel_edges() {
+        for (size_t i = 0; i < adjacency_list.size(); ++i) {
+            std::unordered_map<int, bool> seen;
+            auto& edges = adjacency_list[i];
+            edges.erase(std::remove_if(edges.begin(), edges.end(), [&](const Edge& edge) {
+                if (seen[edge.to]) {
+                    return true; // Remove this edge
+                }
+                seen[edge.to] = true;
+                return false; // Keep this edge
+            }), edges.end());
+        }
+    }
+
+    // Remove self-loops
+    void remove_self_loops() {
+        for (size_t i = 0; i < adjacency_list.size(); ++i) {
+            auto& edges = adjacency_list[i];
+            edges.erase(std::remove_if(edges.begin(), edges.end(), [&](const Edge& edge) {
+                return edge.to == static_cast<int>(i); // Remove self-loop
+            }), edges.end());
+        }
+    }
+
+    // Remove floating nodes (nodes with no edges)
+    void remove_floating_nodes() {
+        for (size_t i = 0; i < adjacency_list.size(); ++i) {
+            if (adjacency_list[i].empty()) {
+                // Remove node
+                int node_id = nodes[i];
+                node_to_index.erase(node_id);
+                nodes.erase(nodes.begin() + i);
+                adjacency_list.erase(adjacency_list.begin() + i);
+                --i; // Adjust index after removal
+            }
+        }
     }
 
     // Node iterator implementation

@@ -97,11 +97,26 @@ int main(int argc, char* argv[]) {
     }
 
     // Generate graph and print the graph statistics
-    Graph<int> sbm_graph = sbm.generate_graph(clustered_subgraph.node_count(), clustering.get_block_assignments());
+    std::vector<int> block_assignments = clustering.get_block_assignments();
+    Graph<int> sbm_graph = sbm.generate_graph(clustered_subgraph.node_count(), block_assignments);
+    sbm_graph.remove_floating_nodes();
+    sbm_graph.remove_self_loops();
+    sbm_graph.remove_parallel_edges();
     if (verbose) {
         std::cout << "Graph generated from SBM." << std::endl;
         std::cout << "Number of nodes in SBM graph: " << sbm_graph.node_count() << std::endl;
         std::cout << "Number of edges in SBM graph: " << sbm_graph.edge_count() << std::endl;
+    }
+
+    // Create a clustering for the SBM graph
+    Clustering sbm_clustering;
+    for (auto node_it = sbm_graph.begin(); node_it != sbm_graph.end(); ++node_it) {
+        int node_id = *node_it;
+        int cluster_id = block_assignments[node_id];
+        sbm_clustering.add_node_to_cluster(node_id, cluster_id);
+    }
+    if (verbose) {
+        std::cout << "Clustering created for SBM graph." << std::endl;
     }
 
     return 0;
