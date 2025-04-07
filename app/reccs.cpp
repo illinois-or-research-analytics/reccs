@@ -56,7 +56,8 @@ int main(int argc, char* argv[]) {
     graph_io io;
 
     // Read graph
-    auto graph = io.load_graph_from_tsv(edgelist_file);
+    std::map<int, int> id_to_index; // Map to store original IDs to contiguous indices
+    auto graph = io.load_graph_from_tsv(edgelist_file, id_to_index);
     
     // Read clustering
     auto clustering = io.load_clustering_from_tsv(clustering_file);
@@ -69,7 +70,20 @@ int main(int argc, char* argv[]) {
     if (verbose) {
         std::cout << "Graph loaded with " << igraph_vcount(&graph) << " vertices and "
                   << igraph_ecount(&graph) << " edges." << std::endl;
-        std::cout << "Clustering loaded with " << clustering.size() << " clusters." << std::endl;
+        std::cout << "Clustering loaded with " << clustering.get_num_clusters() << " clusters." << std::endl;
+    }
+
+    // Get singleton nodes
+    auto singletons = clustering.get_singletons();
+    if (verbose) {
+        std::cout << "Found " << singletons.size() << " singleton nodes." << std::endl;
+    }
+
+    // Get the clustered subgraph
+    auto clustered_subgraph = SubgraphExtractor::get_clustered_subgraph(graph, clustering, id_to_index);
+    if (verbose) {
+        std::cout << "Clustered subgraph created with " << igraph_vcount(&clustered_subgraph) << " vertices." << std::endl;
+        std::cout << "Clustered subgraph created with " << igraph_ecount(&clustered_subgraph) << " edges." << std::endl;
     }
 
     return 0;
