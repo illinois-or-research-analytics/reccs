@@ -208,4 +208,15 @@ public:
         
         return result;
     }
+
+    /**
+     * @brief Simplify the graph by removing multiple edges and loops.
+     */
+    void cleanup() {
+        igraph_simplify(
+            &graph,
+            /* remove_multiple = */ true,
+            /* remove_loops = */ true,
+            /* edge_comb = */ NULL);
+    }
 };

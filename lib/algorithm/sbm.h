@@ -36,8 +36,8 @@ public:
             if (cluster_from == cluster_to) {
                 MATRIX(block_matrix, cluster_from, cluster_to) += 1;
             } else {
-                MATRIX(block_matrix, cluster_from, cluster_to) += 0.5;
-                MATRIX(block_matrix, cluster_to, cluster_from) += 0.5;
+                MATRIX(block_matrix, cluster_from, cluster_to) += 1;
+                MATRIX(block_matrix, cluster_to, cluster_from) += 1;
             }
         }
 
@@ -45,7 +45,14 @@ public:
         for (int i = 0; i < num_blocks; i++) {
             for (int j = 0; j < num_blocks; j++) {
                 if (VECTOR(cluster_sizes)[i] > 0 && VECTOR(cluster_sizes)[j] > 0) {
-                    MATRIX(block_matrix, i, j) /= VECTOR(cluster_sizes)[i] * VECTOR(cluster_sizes)[j];
+                    if (i == j) {
+                        // Within-cluster: divide by the number of possible edges
+                        int n = VECTOR(cluster_sizes)[i];
+                        MATRIX(block_matrix, i, j) /= (n * (n-1) / 2.0);
+                    } else {
+                        // Between-cluster: divide by the product of sizes
+                        MATRIX(block_matrix, i, j) /= (VECTOR(cluster_sizes)[i] * VECTOR(cluster_sizes)[j]);
+                    }
                 }
             }
         }
