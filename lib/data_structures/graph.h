@@ -212,7 +212,7 @@ public:
     /**
      * @brief Simplify the graph by removing multiple edges and loops.
      */
-    void cleanup() {
+    void cleanup(bool remove_multiple = true, bool remove_loops = true) {
         igraph_simplify(
             &graph,
             /* remove_multiple = */ true,

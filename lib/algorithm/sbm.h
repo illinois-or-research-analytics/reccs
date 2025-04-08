@@ -113,6 +113,9 @@ public:
         // Convert the igraph_t to our Graph object
         Graph new_graph(g, id_to_index);
 
+        // No need to remove loops, but remove multiple edges
+        new_graph.cleanup(true, false); // Loops are already removed in the igraph_sbm_game function
+
         return new_graph;
     }
 };
