@@ -5,13 +5,10 @@ Scalable REalistic Cluster Connectivity Simulator for synthetic network generati
 Simply run the following
 
 ```
-mkdir build
-cd build
-cmake ..
-make
+source install.sh
 ```
 
 Then run using the following command:
 ```
-./reccs <edgelist tsv> <clustering tsv>
+./reccs -e <edgelist tsv> -c <clustering tsv>
 ```
