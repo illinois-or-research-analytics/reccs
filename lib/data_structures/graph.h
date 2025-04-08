@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <algorithm>
 #include <limits>
+#include <iostream>
+#include <fstream>
 
 #include <igraph/igraph.h>
 

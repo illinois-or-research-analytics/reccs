@@ -9,7 +9,7 @@
 
 #include "io/graph_io.h"
 #include "utils/subgraph_extractor.h"
-// #include "algorithm/sbm.h"
+#include "algorithm/sbm.h"
 
 
 int main(int argc, char* argv[]) {
@@ -85,6 +85,22 @@ int main(int argc, char* argv[]) {
         std::cout << "Clustered subgraph created with " << clustered_subgraph.get_num_nodes() << " vertices." << std::endl;
         std::cout << "Clustered subgraph created with " << clustered_subgraph.get_num_edges() << " edges." << std::endl;
     }
+
+    // Create the Stochastic Block Model
+    StochasticBlockModel sbm(clustered_subgraph, clustering);
+    if (verbose) {
+        std::cout << "Stochastic Block Model created." << std::endl;
+    }
+\
+    // Generate a new graph from the SBM
+    auto generated_graph = sbm.generate_graph();
+    if (verbose) {
+        std::cout << "Generated graph from SBM with " << generated_graph.get_num_nodes() << " vertices and "
+                  << generated_graph.get_num_edges() << " edges." << std::endl;
+    }
+
+    // Write the generated graph to a TSV file
+    io.write_tsv(generated_graph, "generated_graph.tsv");
 
     return 0;
 }

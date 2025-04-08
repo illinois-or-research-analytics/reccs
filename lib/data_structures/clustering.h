@@ -84,12 +84,28 @@ public:
      * 
      * @return The number of unique clusters.
      */
-    int get_num_clusters() {
+    int get_num_clusters() const {
         std::unordered_set<int> clusters;
         for (const auto& [node, cluster] : node_to_cluster) {
             clusters.insert(cluster);
         }
         return clusters.size();
+    } 
+
+    /**
+     * @brief Get the size of a specific cluster.
+     * 
+     * @param cluster_id The ID of the cluster to query.
+     * @return The number of nodes in the specified cluster.
+     */
+    int get_cluster_size(int cluster_id) const {
+        int size = 0;
+        for (const auto& [node, cluster] : node_to_cluster) {
+            if (cluster == cluster_id) {
+                size++;
+            }
+        }
+        return size;
     }
 
     /**

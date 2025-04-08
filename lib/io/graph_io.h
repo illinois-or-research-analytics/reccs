@@ -8,6 +8,7 @@
 
 #include "data_structures/graph.h"
 #include "data_structures/clustering.h"
+#include "data_structures/edge_iterator.h"
 
 class graph_io {
 public:
@@ -106,5 +107,33 @@ public:
         }
 
         return clustering;
+    }
+
+    /**
+     * Writes a graph to a TSV file containing an edgelist.
+     * Each line contains: source_id \t target_id
+     * 
+     * @param graph The graph to write
+     * @param output_file Path to the output TSV file
+     */
+    static void write_tsv(const Graph& graph, const std::string& output_file) {
+        // Open the output file
+        EdgeIterator edge_iterator(graph);
+        std::ofstream output(output_file);
+        if (!output.is_open()) {
+            std::cerr << "Error opening output file: " << output_file << std::endl;
+            exit(1);
+        }
+        
+        // Write the edges to the file
+        for (edge_iterator.reset(); edge_iterator.has_next(); edge_iterator.next()) {
+            igraph_integer_t from, to;
+            edge_iterator.get(from, to);
+            
+            output << from << "\t" << to << "\n";
+        }
+
+        // Close the output file
+        output.close();
     }
 };
