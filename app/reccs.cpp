@@ -10,6 +10,7 @@
 #include "io/graph_io.h"
 #include "utils/subgraph_extractor.h"
 #include "algorithm/sbm.h"
+#include "algorithm/sbm_gt.h"
 
 
 int main(int argc, char* argv[]) {
@@ -20,6 +21,7 @@ int main(int argc, char* argv[]) {
     bool verbose = false;
     std::string edgelist_file;
     std::string clustering_file;
+    std::string method = "gt"; // Default method
     for (int i = 1; i < argc; ++i) {
         // Read verbose flag
         if (std::string(argv[i]) == "-v" || std::string(argv[i]) == "--verbose") {
@@ -43,6 +45,18 @@ int main(int argc, char* argv[]) {
             } else {
                 std::cerr << "Error: No edgelist file provided." << std::endl;
                 return 1;
+            }
+        }
+
+        // Optional argument for sbm generation method
+        if (std::string(argv[i]) == "-sbm" || std::string(argv[i]) == "--sbm") {
+            if (i + 1 < argc) {
+                // Read the method argument
+                method = argv[++i];
+                if (method != "gt" && method != "igraph") {
+                    std::cerr << "Error: Invalid method. Use 'gt' or 'igraph'." << std::endl;
+                    return 1;
+                }
             }
         }
     }
@@ -87,20 +101,25 @@ int main(int argc, char* argv[]) {
     }
 
     // Create the Stochastic Block Model
-    StochasticBlockModel sbm(clustered_subgraph, clustering);
+    Graph generated_graph;
+    if (method == "igraph") { 
+        StochasticBlockModel sbm(clustered_subgraph, clustering);
+        generated_graph = sbm.generate_graph();
+    } else {
+        StochasticBlockModelGT sbm(clustered_subgraph, clustering);
+        generated_graph = sbm.generate_graph();
+    }
+
     if (verbose) {
         std::cout << "Stochastic Block Model created." << std::endl;
     }
-\
-    // Generate a new graph from the SBM
-    auto generated_graph = sbm.generate_graph();
     if (verbose) {
         std::cout << "Generated graph from SBM with " << generated_graph.get_num_nodes() << " vertices and "
                   << generated_graph.get_num_edges() << " edges." << std::endl;
     }
 
     // Write the generated graph to a TSV file
-    io.write_tsv(generated_graph, "generated_graph.tsv");
+    io.write_graph_to_tsv(generated_graph, "generated_graph.tsv");
 
     return 0;
 }

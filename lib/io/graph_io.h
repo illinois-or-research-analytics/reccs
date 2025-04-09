@@ -71,9 +71,6 @@ public:
         // Create the graph
         igraph_t graph_primitive;
         igraph_create(&graph_primitive, &edges, unique_nodes.size(), IGRAPH_UNDIRECTED);
-        
-        // Clean up
-        igraph_vector_int_destroy(&edges);
 
         // Create a new Graph object
         Graph graph(graph_primitive, id_to_index);
@@ -116,7 +113,7 @@ public:
      * @param graph The graph to write
      * @param output_file Path to the output TSV file
      */
-    static void write_tsv(const Graph& graph, const std::string& output_file) {
+    static void write_graph_to_tsv(const Graph& graph, const std::string& output_file) {
         // Open the output file
         EdgeIterator edge_iterator(graph);
         std::ofstream output(output_file);
@@ -131,6 +128,33 @@ public:
             edge_iterator.get(from, to);
             
             output << from << "\t" << to << "\n";
+        }
+
+        // Close the output file
+        output.close();
+    }
+
+    /**
+     * Writes a clustering to a TSV file.
+     * Each line contains: node_id \t cluster_id
+     * 
+     * @param clustering The clustering to write
+     * @param output_file Path to the output TSV file
+     */
+    static void write_clustering_to_tsv(const Clustering& clustering, const std::string& output_file) {
+        // Open the output file
+        std::ofstream output(output_file);
+        if (!output.is_open()) {
+            std::cerr << "Error opening output file: " << output_file << std::endl;
+            exit(1);
+        }
+        
+        // Write the clustering to the file
+        std::unordered_map<int, std::vector<int>> clusters = clustering.get_clusters();
+        for (const auto& cluster : clusters) {
+            for (int node_id : cluster.second) {
+                output << node_id << "\t" << cluster.first << "\n";
+            }
         }
 
         // Close the output file

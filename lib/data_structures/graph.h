@@ -45,13 +45,6 @@ public:
     }
 
     /**
-     * @brief Destructor.
-     */
-    ~Graph() {
-        igraph_destroy(&graph);
-    }
-
-    /**
      * @brief Get the number of nodes in the graph.
      * 
      * @return The number of nodes.
