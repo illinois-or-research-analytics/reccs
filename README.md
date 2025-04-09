@@ -5,8 +5,8 @@ Scalable REalistic Cluster Connectivity Simulator for synthetic network generati
 - [RECCS++](#reccs)
   - [Requirements](#requirements)
   - [Setting Up](#setting-up)
-        - [Installing Dependencies](#installing-dependencies)
-        - [Setting up `graph-tool`](#setting-up-graph-tool)
+    - [Installing Dependencies](#installing-dependencies)
+    - [Setting up `graph-tool`](#setting-up-graph-tool)
   - [Running RECCS](#running-reccs)
 
 ## Requirements
