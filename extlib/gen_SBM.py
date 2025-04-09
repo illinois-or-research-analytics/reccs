@@ -24,7 +24,6 @@ import pandas as pd
 import numpy as np
 import graph_tool.all as gt # type: ignore
 from graph_tool.all import * # type: ignore
-import argparse
 import typer
 import os
 import networkit as nk
@@ -155,7 +154,7 @@ def main(
     G, node_mapping = read_graph(edge_input)
     cluster_df = read_clustering(cluster_input)
 
-    # TODO: Figure out what this does
+    # Add in outliers - this is mainly for Stage 2 of RECCS
     new_cluster_id = np.max(cluster_df['cluster_id']) + 1
     node_mapping_reversed = {v: int(k) for k, v in node_mapping.items()}
     clustered_nodes_id_org = cluster_df['node_id'].to_numpy()
@@ -164,7 +163,7 @@ def main(
         nodes_set.add(node_mapping_reversed.get(u))
     unclustered_nodes = nodes_set.difference(clustered_nodes_id_org)
     
-    # TODO: Figure out what this does
+    # Add in the outliers to the cluster_df
     unclustered_node_cluster_mapping = []
     for v in unclustered_nodes:
         row = {'node_id': v, 'cluster_id' : new_cluster_id}
@@ -193,20 +192,4 @@ def main(
     save_generated_graph(N_edge_list, out_edge_file)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Generate graph ')
-    parser.add_argument(
-        '-f', metavar='edge_list_filepath', type=str, required=True,
-        help='network edge_list filepath'
-        )
-    parser.add_argument(
-        '-c', metavar='clustering_filepath', type=str, required=True,
-        help='network clustering filepath'
-        )
-    parser.add_argument(
-        '-o', metavar='output_dir', type=str, required=True,
-        help='output directory'
-        )
-    
-    args = parser.parse_args()
-
     typer.run(main)
