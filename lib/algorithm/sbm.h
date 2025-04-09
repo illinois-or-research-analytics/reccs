@@ -1,6 +1,8 @@
 #include <ctime>
 
-// New class to compute and work with SBM
+/**
+ * @brief Stochastic Block Model (SBM) for generating random graphs.
+ */
 class StochasticBlockModel {
 private:
     igraph_matrix_t block_matrix;
