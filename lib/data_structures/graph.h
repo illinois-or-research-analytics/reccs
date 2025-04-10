@@ -208,8 +208,8 @@ public:
     void cleanup(bool remove_multiple = true, bool remove_loops = true) {
         igraph_simplify(
             &graph,
-            /* remove_multiple = */ true,
-            /* remove_loops = */ true,
+            /* remove_multiple = */ remove_multiple,
+            /* remove_loops = */ remove_loops,
             /* edge_comb = */ NULL);
     }
 };

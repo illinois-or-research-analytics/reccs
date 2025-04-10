@@ -109,10 +109,7 @@ int main(int argc, char* argv[]) {
         StochasticBlockModelGT sbm(clustered_subgraph, clustering);
         generated_graph = sbm.generate_graph();
     }
-
-    if (verbose) {
-        std::cout << "Stochastic Block Model created." << std::endl;
-    }
+    
     if (verbose) {
         std::cout << "Generated graph from SBM with " << generated_graph.get_num_nodes() << " vertices and "
                   << generated_graph.get_num_edges() << " edges." << std::endl;

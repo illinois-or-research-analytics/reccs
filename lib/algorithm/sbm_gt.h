@@ -70,7 +70,6 @@ public:
             clustering_file +
             " -o " +
             temp_dir;
-        std::cout << "Running command: " << command << std::endl;
 
         // Execute the command
         int result = system(command.c_str());
@@ -83,13 +82,13 @@ public:
         std::string output_file = temp_dir + "/syn_sbm.tsv";
         std::unordered_map<int, int> id_to_index;
 
-        std::cout << "Loading generated graph from: " << output_file << std::endl;
         Graph generated_graph = io.load_graph_from_tsv(output_file, id_to_index);
-        std::cout << "Generated graph loaded with " << generated_graph.get_num_nodes() << " vertices and "
-                  << generated_graph.get_num_edges() << " edges." << std::endl;
 
         // Clean up temporary files
         std::filesystem::remove_all(temp_dir);
+
+        // Clean up the generated graph
+        generated_graph.cleanup(true, true);
 
         return generated_graph;
     }
