@@ -147,7 +147,7 @@ def main(
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     
-    # 
+    # Output filename
     out_edge_file = os.path.join(output_dir, f'syn_sbm.tsv')
 
     # Read the graph and clustering
