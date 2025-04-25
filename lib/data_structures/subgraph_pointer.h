@@ -46,6 +46,19 @@ public:
         return vertices_.size();
     }
 
+    /**
+     * @brief Get the number of edges in the subgraph.
+     * 
+     * @return The number of edges in the subgraph.
+     */
+    size_t num_edges() const {
+        size_t count = 0;
+        for (const auto& v : vertices_) {
+            count += get_neighbors(v).size();
+        }
+        return count / 2; // Each edge is counted twice
+    }
+
     /** 
      * @brief Get the vertices in the subgraph.
      * 
@@ -75,7 +88,12 @@ public:
         vertices_.erase(std::remove(vertices_.begin(), vertices_.end(), v), vertices_.end());
     }
 
-    // Get neighbors of a vertex that are in the subgraph
+    /**
+     * @brief Get the neighbors of a vertex in the subgraph.
+     *
+     * @param v The vertex ID whose neighbors to retrieve.
+     * @return A vector of neighbor vertex IDs.
+     */
     std::vector<int> get_neighbors(int v) const {
         if (!has_vertex(v)) return {};
         
@@ -88,12 +106,23 @@ public:
         return neighbors;
     }
 
-    // Check if there's an edge between two vertices in the subgraph
+    /**
+     * @brief Check if an edge exists between two vertices in the subgraph.
+     *
+     * @param src The source vertex ID.
+     * @param dst The destination vertex ID.
+     * @return True if the edge exists, false otherwise.
+     */
     bool has_edge(int src, int dst) const {
         return has_vertex(src) && has_vertex(dst) && main_graph_->has_edge(src, dst);
     }
 
-    // Add edge to the main graph and ensure both vertices are in the subgraph
+    /**
+     * @brief Add an edge between two vertices in the subgraph.
+     *
+     * @param src The source vertex ID.
+     * @param dst The destination vertex ID.
+     */
     void add_edge(int src, int dst) {
         add_vertex(src);
         add_vertex(dst);
@@ -103,14 +132,39 @@ public:
     // Remove edge operation is not needed for reference implementation
     // since edges are maintained by the main graph
 
-    // Get the degree of a vertex in the subgraph
+    /**
+     * @brief Get the degree of a vertex in the subgraph.
+     *
+     * @param v The vertex ID whose degree to retrieve.
+     * @return The degree of the vertex.
+     */
     size_t get_degree(int v) const {
         if (!has_vertex(v)) return 0;
         return get_neighbors(v).size();
     }
 
-    // Get pointer to the main graph
+    /**
+     * @brief Get the main graph.
+     *
+     * @return Pointer to the main graph.
+     */
     Graph* get_main_graph() const {
         return main_graph_;
+    }
+
+    /**
+     * @brief Get the subgraph as a new Graph object.
+     *
+     * @return A new Graph object representing the subgraph.
+     */
+    Graph realize() const {
+        Graph subgraph;
+        for (const auto& v : vertices_) {
+            subgraph.add_vertex(v);
+            for (const auto& neighbor : get_neighbors(v)) {
+                subgraph.add_edge(v, neighbor);
+            }
+        }
+        return subgraph;
     }
 };
