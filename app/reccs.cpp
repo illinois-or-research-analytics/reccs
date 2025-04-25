@@ -88,9 +88,16 @@ int main(int argc, char* argv[]) {
     }
 
     // Get singleton nodes
-    auto singletons = clustering.get_singletons();
     if (verbose) {
+        auto singletons = clustering.get_singletons();
         std::cout << "Found " << singletons.size() << " singleton nodes." << std::endl;
+    }
+
+    // Get the outlier subgraph
+    auto outlier_subgraph = SubgraphExtractor::get_outlier_subgraph(graph, clustering, id_to_index);
+    if (verbose) {
+        std::cout << "Outlier subgraph created with " << outlier_subgraph.get_num_nodes() << " vertices." << std::endl;
+        std::cout << "Outlier subgraph created with " << outlier_subgraph.get_num_edges() << " edges." << std::endl;
     }
 
     // Get the clustered subgraph

@@ -20,4 +20,34 @@ public:
 
         return subgraph;
     }
+
+    /**
+     * Extracts a subgraph from a graph containing singletons and their neighbors.
+     * 
+     * @param graph The original graph.
+     * @param clustering The clustering of the nodes.
+     * @param id_to_index Mapping from original node IDs to indices.
+     * @return A subgraph containing singleton nodes and their neighbors.
+     */
+    static Graph get_outlier_subgraph(const Graph& graph, Clustering& clustering, std::unordered_map<int, int>& id_to_index) {
+        // Get the singleton nodes
+        std::vector<int> singletons = clustering.get_singletons();
+        
+        // Get the union of singletons and their neighbors
+        std::unordered_set<int> vertices_set(singletons.begin(), singletons.end());
+        
+        // Add neighbors of singletons to the set
+        for (int node : singletons) {
+            const auto& neighbors = graph.get_neighbors(node);
+            vertices_set.insert(neighbors.begin(), neighbors.end());
+        }
+        
+        // Convert set back to vector
+        std::vector<int> vertices(vertices_set.begin(), vertices_set.end());
+        
+        // Create a new graph for the outlier subgraph with singletons and their neighbors
+        Graph outlier_subgraph = graph.get_induced_subgraph(vertices);
+        
+        return outlier_subgraph;
+    }
 };
