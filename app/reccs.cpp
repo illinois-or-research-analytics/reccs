@@ -94,11 +94,17 @@ int main(int argc, char* argv[]) {
     }
 
     // Get the outlier subgraph
-    auto outlier_subgraph = SubgraphExtractor::get_outlier_subgraph(graph, clustering, id_to_index);
+    Clustering clustering_outlier;
+    auto outlier_subgraph = SubgraphExtractor::get_outlier_subgraph(graph, clustering, id_to_index, clustering_outlier);
     if (verbose) {
         std::cout << "Outlier subgraph created with " << outlier_subgraph.get_num_nodes() << " vertices." << std::endl;
         std::cout << "Outlier subgraph created with " << outlier_subgraph.get_num_edges() << " edges." << std::endl;
+
+        std::cout << "Outlier clustering created with " << clustering_outlier.get_num_clusters() << " clusters." << std::endl;
     }
+
+    // Create a copy of the clustering
+    Clustering clustering_copy = clustering;
 
     // Get the clustered subgraph
     auto clustered_subgraph = SubgraphExtractor::get_clustered_subgraph(graph, clustering, id_to_index);
@@ -116,9 +122,31 @@ int main(int argc, char* argv[]) {
         StochasticBlockModelGT sbm(clustered_subgraph, clustering);
         generated_graph = sbm.generate_graph();
     }
+
+    // Create the Stochastic Block Model with the outlier subgraph
+    Graph generated_graph_outlier;
+    if (method == "igraph") { 
+        StochasticBlockModel sbm_outlier(outlier_subgraph, clustering_outlier);
+        generated_graph_outlier = sbm_outlier.generate_graph();
+    } else {
+        StochasticBlockModelGT sbm_outlier(outlier_subgraph, clustering_outlier);
+        generated_graph_outlier = sbm_outlier.generate_graph();
+    }
+    if (verbose) {
+        std::cout << "Generated outlier graph from SBM with " << generated_graph_outlier.get_num_nodes() << " vertices and "
+                  << generated_graph_outlier.get_num_edges() << " edges." << std::endl;
+    }
     
     if (verbose) {
-        std::cout << "Generated graph from SBM with " << generated_graph.get_num_nodes() << " vertices and "
+        std::cout << "Generated clustered subgraph from SBM with " << generated_graph.get_num_nodes() << " vertices and "
+                  << generated_graph.get_num_edges() << " edges." << std::endl;
+    }
+
+    // Merge the outlier graph into the clustered graph
+    generated_graph = generated_graph.merge(generated_graph_outlier);
+    if (verbose) {
+        std::cout << "Merged outlier graph into clustered graph." << std::endl;
+        std::cout << "Final generated graph has " << generated_graph.get_num_nodes() << " vertices and "
                   << generated_graph.get_num_edges() << " edges." << std::endl;
     }
 

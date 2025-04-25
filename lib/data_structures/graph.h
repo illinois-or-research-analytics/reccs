@@ -212,4 +212,84 @@ public:
             /* remove_loops = */ remove_loops,
             /* edge_comb = */ NULL);
     }
+
+    /**
+     * @brief Merge this graph with another graph.
+     * 
+     * @param g The graph to merge with.
+     * @return A new Graph containing all nodes and edges from both graphs.
+     */
+    Graph merge(const Graph& g) {
+        // Create a new combined graph
+        igraph_t result;
+        igraph_empty(&result, 0, IGRAPH_UNDIRECTED);
+        
+        // Create a new mapping for the combined graph
+        std::unordered_map<int, int> new_id_to_index;
+        int next_index = 0;
+        
+        // Reserve space for all potential nodes
+        std::vector<int> all_ids;
+        all_ids.reserve(id_to_index.size() + g.id_to_index.size());
+        
+        // Pre-allocate the maps to avoid rehashing
+        new_id_to_index.reserve(id_to_index.size() + g.id_to_index.size());
+        
+        // Add nodes from this graph
+        for (const auto& pair : id_to_index) {
+            if (new_id_to_index.find(pair.first) == new_id_to_index.end()) {
+                new_id_to_index[pair.first] = next_index++;
+                all_ids.push_back(pair.first);
+            }
+        }
+        
+        // Add nodes from the other graph
+        for (const auto& pair : g.id_to_index) {
+            if (new_id_to_index.find(pair.first) == new_id_to_index.end()) {
+                new_id_to_index[pair.first] = next_index++;
+                all_ids.push_back(pair.first);
+            }
+        }
+        
+        // Resize the graph to hold all unique nodes
+        igraph_add_vertices(&result, next_index, NULL);
+        
+        // Pre-allocate edges vector
+        igraph_vector_int_t edges;
+        igraph_vector_int_init(&edges, 2 * (igraph_ecount(&graph) + igraph_ecount(&g.graph)));
+        int edge_idx = 0;
+        
+        // Add edges from this graph
+        for (int e = 0; e < igraph_ecount(&graph); e++) {
+            igraph_integer_t from, to;
+            igraph_edge(&graph, e, &from, &to);
+            
+            int from_id = index_to_id.at(from);
+            int to_id = index_to_id.at(to);
+            
+            VECTOR(edges)[edge_idx++] = new_id_to_index[from_id];
+            VECTOR(edges)[edge_idx++] = new_id_to_index[to_id];
+        }
+        
+        // Add edges from the other graph
+        for (int e = 0; e < igraph_ecount(&g.graph); e++) {
+            igraph_integer_t from, to;
+            igraph_edge(&g.graph, e, &from, &to);
+            
+            int from_id = g.index_to_id.at(from);
+            int to_id = g.index_to_id.at(to);
+            
+            VECTOR(edges)[edge_idx++] = new_id_to_index[from_id];
+            VECTOR(edges)[edge_idx++] = new_id_to_index[to_id];
+        }
+        
+        // Add all edges at once
+        igraph_add_edges(&result, &edges, NULL);
+        igraph_vector_int_destroy(&edges);
+        
+        // Create the new graph
+        Graph merged_graph(result, new_id_to_index);
+        
+        return merged_graph;
+    }
 };

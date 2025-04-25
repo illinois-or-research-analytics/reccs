@@ -29,7 +29,11 @@ public:
      * @param id_to_index Mapping from original node IDs to indices.
      * @return A subgraph containing singleton nodes and their neighbors.
      */
-    static Graph get_outlier_subgraph(const Graph& graph, Clustering& clustering, std::unordered_map<int, int>& id_to_index) {
+    static Graph get_outlier_subgraph(
+        const Graph& graph,
+        Clustering& clustering,
+        std::unordered_map<int, int>& id_to_index,
+        Clustering& clustering_outlier) {
         // Get the singleton nodes
         std::vector<int> singletons = clustering.get_singletons();
         
@@ -47,6 +51,29 @@ public:
         
         // Create a new graph for the outlier subgraph with singletons and their neighbors
         Graph outlier_subgraph = graph.get_induced_subgraph(vertices);
+        
+        // Initialize the clustering_outlier object
+        clustering_outlier.clear();
+        
+        // Add all singletons to a single cluster (cluster -1)
+        for (int node : singletons) {
+            clustering_outlier.add_node_to_cluster(node, -1);
+        }
+        
+        // For neighbors, preserve their original cluster assignment if they have one
+        for (int node : vertices) {
+            // Skip if it's a singleton (already added to cluster 0)
+            if (std::find(singletons.begin(), singletons.end(), node) != singletons.end()) {
+                continue;
+            }
+            
+            // Check if node has a cluster assignment in the original clustering
+            int cluster = clustering.get_cluster(node);
+            if (cluster != -1) {  // -1 typically indicates no cluster
+                // Add to the same cluster in the outlier clustering
+                clustering_outlier.add_node_to_cluster(node, cluster);
+            }
+        }
         
         return outlier_subgraph;
     }

@@ -133,6 +133,15 @@ public:
     }
 
     /**
+     * @brief Get the number of singleton nodes.
+     * 
+     * @return The number of singleton nodes.
+     */
+    int get_num_singletons() const {
+        return get_singletons().size();
+    }
+
+    /**
      * @brief Remove all singleton nodes from the clustering.
      */
     void remove_singletons() {
@@ -172,7 +181,7 @@ public:
         }
         
         return assignments;
-    }
+    }    
 };
 
 #endif // CLUSTERING_H
