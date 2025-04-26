@@ -83,26 +83,67 @@ public:
      * Each line contains: node_id \t cluster_id
      * 
      * @param filepath Path to the TSV file
-    static reccs::Clustering load_clustering_from_tsv(const std::string& filepath) {
      */
     static Clustering load_clustering_from_tsv(const std::string& filepath) {
-        std::ifstream file(filepath);
+        // Read file into memory in one operation
+        std::ifstream file(filepath, std::ios::ate);  // Open at end to get file size
         if (!file.is_open()) {
             throw std::runtime_error("Could not open file: " + filepath);
         }
         
+        // Pre-allocate memory for the file content
+        std::streamsize size = file.tellg();
+        file.seekg(0, std::ios::beg);
+        std::vector<char> buffer(size);
+        file.read(buffer.data(), size);
+        file.close();
+        
+        // Process the buffer
         Clustering clustering;
-        std::string line;
-        while (std::getline(file, line)) {
-            std::istringstream iss(line);
-            int node_id;
-            int cluster_id;
-            if (!(iss >> node_id >> cluster_id)) {
-                continue; // Skip malformed lines
+        std::unordered_map<int, std::vector<int>> tmp_clusters;
+        
+        const char* p = buffer.data();
+        const char* end = p + size;
+        
+        // Count number of lines to pre-allocate vectors
+        size_t line_count = std::count(p, end, '\n');
+        
+        while (p < end) {
+            // Parse node_id
+            int node_id = 0;
+            while (p < end && *p >= '0' && *p <= '9') {
+                node_id = node_id * 10 + (*p - '0');
+                p++;
             }
-            clustering.add_node_to_cluster(node_id, cluster_id);
+            
+            // Skip whitespace
+            while (p < end && (*p == ' ' || *p == '\t')) p++;
+            
+            // Parse cluster_id
+            int cluster_id = 0;
+            while (p < end && *p >= '0' && *p <= '9') {
+                cluster_id = cluster_id * 10 + (*p - '0');
+                p++;
+            }
+            
+            // Add to clustering
+            if (!tmp_clusters.count(cluster_id)) {
+                tmp_clusters[cluster_id].reserve(line_count / 10);  // Rough estimate
+            }
+            tmp_clusters[cluster_id].push_back(node_id);
+            
+            // Skip to next line
+            while (p < end && *p != '\n') p++;
+            if (p < end) p++;  // Skip newline
         }
-
+        
+        // Build the clustering from temp structure
+        for (const auto& [cluster_id, nodes] : tmp_clusters) {
+            for (int node_id : nodes) {
+                clustering.add_node_to_cluster(node_id, cluster_id);
+            }
+        }
+        
         return clustering;
     }
 

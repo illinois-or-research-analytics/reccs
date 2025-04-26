@@ -15,7 +15,7 @@
 
 int main(int argc, char* argv[]) {
     // Initialize the igraph library
-    igraph_i_set_attribute_table(&igraph_cattribute_table);
+    igraph_set_attribute_table(&igraph_cattribute_table);
 
     // Read command line arguments
     bool verbose = false;
