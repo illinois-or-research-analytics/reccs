@@ -6,6 +6,14 @@
 #include <set> 
 #include <map>
 
+// Include OpenMP for parallel processing
+#include <omp.h>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+#include <string>
+#include <mutex>
+
 #include "data_structures/graph.h"
 #include "data_structures/clustering.h"
 #include "data_structures/edge_iterator.h"
@@ -17,64 +25,119 @@ public:
      * Each line contains: source_id \t target_id
      * 
      * @param filepath Path to the TSV file
-    static reccs::Graph load_graph_from_tsv(const std::string& filepath) {
      */
-    static Graph load_graph_from_tsv(const std::string& filepath, std::unordered_map<int, int>& id_to_index) {
-        // Vectors to store edges
-        std::vector<int> from_nodes;
-        std::vector<int> to_nodes;
-        std::set<int> unique_nodes;  // To track all unique node IDs
-        
-        // Read the TSV file
-        std::ifstream file(filepath);
+    static Graph load_graph_from_tsv(const std::string& filepath, 
+                                      std::unordered_map<int, int>& id_to_index) {
+        // Read file into memory in one operation for faster processing
+        std::ifstream file(filepath, std::ios::ate);  // Open at end to get file size
         if (!file.is_open()) {
-            std::cerr << "Failed to open file: " << filepath << std::endl;
-            exit(EXIT_FAILURE);
+            throw std::runtime_error("Could not open file: " + filepath);
         }
         
-        std::string line;
-        while (std::getline(file, line)) {
-            std::istringstream iss(line);
-            int from, to;
-            
-            // Parse TSV line (tab-separated values)
-            if (!(iss >> from >> to)) {
-                std::cerr << "Error parsing line: " << line << std::endl;
-                continue;
-            }
-            
-            // Store edge endpoints
-            from_nodes.push_back(from);
-            to_nodes.push_back(to);
-            
-            // Keep track of unique node IDs
-            unique_nodes.insert(from);
-            unique_nodes.insert(to);
-        }
+        // Pre-allocate memory for the file content
+        std::streamsize size = file.tellg();
+        file.seekg(0, std::ios::beg);
+        std::vector<char> buffer(size);
+        file.read(buffer.data(), size);
         file.close();
         
-        // Create mapping from original IDs to contiguous indices
+        // Process the buffer in parallel to extract unique vertex IDs
+        std::vector<std::string> lines;
+        std::istringstream stream(std::string(buffer.data(), size));
+        std::string line;
+        while (std::getline(stream, line)) {
+            lines.push_back(line);
+        }
+
+        // Use thread-safe set for collecting unique IDs
+        std::mutex set_mutex;
+        std::set<int> unique_ids;
+        
+        #pragma omp parallel
+        {
+            std::set<int> local_ids;
+            
+            #pragma omp for nowait
+            for (size_t i = 0; i < lines.size(); i++) {
+                std::istringstream iss(lines[i]);
+                int source, target;
+                if (iss >> source >> target) {
+                    local_ids.insert(source);
+                    local_ids.insert(target);
+                }
+            }
+            
+            // Merge local sets into the global set
+            std::lock_guard<std::mutex> lock(set_mutex);
+            unique_ids.insert(local_ids.begin(), local_ids.end());
+        }
+        
+        // Create mapping from original IDs to consecutive indices
         int index = 0;
-        for (int id : unique_nodes) {
+        for (int id : unique_ids) {
             id_to_index[id] = index++;
         }
         
-        // Create igraph edge vector with mapped indices
-        igraph_vector_int_t edges;
-        igraph_vector_int_init(&edges, from_nodes.size() * 2);
+        // Create a temporary edge list file with remapped IDs
+        std::string temp_file = filepath + ".temp";
+        std::ofstream temp_out(temp_file);
         
-        for (size_t i = 0; i < from_nodes.size(); i++) {
-            VECTOR(edges)[2*i] = id_to_index[from_nodes[i]];
-            VECTOR(edges)[2*i+1] = id_to_index[to_nodes[i]];
+        // Process and write in parallel using local buffers
+        #pragma omp parallel
+        {
+            std::ostringstream local_buffer;
+            
+            #pragma omp for nowait
+            for (size_t i = 0; i < lines.size(); i++) {
+                std::istringstream iss(lines[i]);
+                int source, target;
+                if (iss >> source >> target) {
+                    local_buffer << id_to_index[source] << "\t" << id_to_index[target] << "\n";
+                }
+                
+                // Avoid excessive memory usage by periodically flushing large buffers
+                if (i % 100000 == 0 && local_buffer.tellp() > 0) {
+                    #pragma omp critical
+                    {
+                        temp_out << local_buffer.str();
+                    }
+                    local_buffer.str("");
+                    local_buffer.clear();
+                }
+            }
+            
+            // Final flush of remaining data
+            if (local_buffer.tellp() > 0) {
+                #pragma omp critical
+                {
+                    temp_out << local_buffer.str();
+                }
+            }
         }
         
-        // Create the graph
+        temp_out.close();
+        
+        // Create igraph object
         igraph_t graph_primitive;
-        igraph_create(&graph_primitive, &edges, unique_nodes.size(), IGRAPH_UNDIRECTED);
-
+        
+        // Use igraph's built-in file reading functionality
+        FILE* file_ptr = fopen(temp_file.c_str(), "r");
+        if (!file_ptr) {
+            throw std::runtime_error("Could not open temporary file");
+        }
+        
+        // Read the graph from the file with consecutive IDs
+        if (igraph_read_graph_edgelist(&graph_primitive, file_ptr, 0, IGRAPH_UNDIRECTED)) {
+            fclose(file_ptr);
+            std::remove(temp_file.c_str());
+            throw std::runtime_error("Failed to parse graph from file: " + filepath);
+        }
+        fclose(file_ptr);
+        std::remove(temp_file.c_str());
+        
         // Create a new Graph object
         Graph graph(graph_primitive, id_to_index);
-
+        
         return graph;
     }
     
