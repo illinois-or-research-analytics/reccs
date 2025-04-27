@@ -12,6 +12,9 @@
 #include "algorithm/sbm.h"
 #include "algorithm/sbm_gt.h"
 
+#include <networkit/graph/Graph.hpp>
+#include <networkit/io/EdgeListReader.hpp>
+
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
@@ -20,28 +23,27 @@ int main(int argc, char* argv[]) {
     }
 
     // Create the reader with tab as delimiter
-    NetworKit::EdgeListReader reader('\t', 0, "#", false, false);
+    // Last parameter (true) enables mapping of non-continuous node IDs
+    NetworKit::EdgeListReader reader('\t', 0, "#", false, true);
     
-    // The last parameter (true) enables mapping of non-continuous node IDs
-    NetworKit::Graph G = reader.read(argv[1], true);
+    // Read the graph
+    NetworKit::Graph G = reader.read(argv[1]);
     
-    // Get the node map (original ID → NetworKit index)
-    std::map<std::string, NetworKit::node> nodeMap = reader.getNodeMap();
+    // At this point, NetworKit has already created a mapping internally
+    // You can access it only if needed
+    // std::map<std::string, NetworKit::node> nodeMap = reader.getNodeMap();
     
-    // Create reverse mapping (NetworKit index → original ID)
+    // Only create reverse mapping if you actually need it for your application
+    // This step can be omitted if not needed for downstream processing
+    /*
     std::vector<int> indexToOriginal(G.upperNodeIdBound());
     for (const auto& pair : nodeMap) {
         indexToOriginal[pair.second] = std::stoi(pair.first);
     }
+    */
     
     std::cout << "Number of nodes: " << G.numberOfNodes() << std::endl;
     std::cout << "Number of edges: " << G.numberOfEdges() << std::endl;
-    
-    // Example of accessing original IDs
-    G.forNodes([&](NetworKit::node u) {
-        std::cout << "NetworKit node " << u << " corresponds to original ID " 
-                  << indexToOriginal[u] << std::endl;
-    });
     
     return 0;
 }
