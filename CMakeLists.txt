@@ -36,5 +36,5 @@ target_link_libraries(reccs PRIVATE
 )
 
 # Optional: Disable NetworKit tests and benchmarks to speed up build
-set(NETWORKIT_BUILD_TESTS OFF CACHE BOOL "Build NetworKit tests")
-set(NETWORKIT_BUILD_BENCHMARKS OFF CACHE BOOL "Build NetworKit benchmarks")
+# set(NETWORKIT_BUILD_TESTS OFF CACHE BOOL "Build NetworKit tests")
+# set(NETWORKIT_BUILD_BENCHMARKS OFF CACHE BOOL "Build NetworKit benchmarks")

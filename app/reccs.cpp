@@ -21,58 +21,78 @@
 #include <string>
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <edgelist_file>" << std::endl;
+    // Initialize the igraph library
+    igraph_set_attribute_table(&igraph_cattribute_table);
+
+    // Read command line arguments
+    bool verbose = false;
+    std::string edgelist_file;
+    std::string clustering_file;
+    std::string method = "gt"; // Default method
+    for (int i = 1; i < argc; ++i) {
+        // Read verbose flag
+        if (std::string(argv[i]) == "-v" || std::string(argv[i]) == "--verbose") {
+            verbose = true;
+        }
+
+        // Read clustering file
+        if (std::string(argv[i]) == "-c" || std::string(argv[i]) == "--clustering") {
+            if (i + 1 < argc) {
+                clustering_file = argv[++i];
+            } else {
+                std::cerr << "Error: No clustering file provided." << std::endl;
+                return 1;
+            }
+        }
+
+        // Read edgelist file
+        if (std::string(argv[i]) == "-e" || std::string(argv[i]) == "--edgelist") {
+            if (i + 1 < argc) {
+                edgelist_file = argv[++i];
+            } else {
+                std::cerr << "Error: No edgelist file provided." << std::endl;
+                return 1;
+            }
+        }
+
+        // Optional argument for sbm generation method
+        if (std::string(argv[i]) == "-sbm" || std::string(argv[i]) == "--sbm") {
+            if (i + 1 < argc) {
+                // Read the method argument
+                method = argv[++i];
+                if (method != "gt" && method != "igraph") {
+                    std::cerr << "Error: Invalid method. Use 'gt' or 'igraph'." << std::endl;
+                    return 1;
+                }
+            }
+        }
+    }
+
+    // Read the edgelist and clustering files
+    if (verbose) {
+        std::cout << "Reading graph and clustering..." << std::endl;
+    }
+
+    // Use graph_io to read the graph and clustering
+    graph_io io;
+
+    // Read graph
+    std::unordered_map<int, int> id_to_index; // Map to store original IDs to contiguous indices
+    auto graph = io.load_graph_from_tsv(edgelist_file, id_to_index);
+    
+    // Read clustering
+    auto clustering = io.load_clustering_from_tsv(clustering_file);
+    if (!clustering.size()) {
+        std::cerr << "Error opening clustering file: " << clustering_file << std::endl;
         return 1;
     }
 
-    // Initialize igraph
-    igraph_t graph;
-    
-    // Open the input file
-    FILE* instream = fopen(argv[1], "r");
-    if (!instream) {
-        std::cerr << "Failed to open file: " << argv[1] << std::endl;
-        return 1;
+    // Print graph and clustering information
+    if (verbose) {
+        std::cout << "Graph loaded with " << graph.get_num_nodes() << " vertices and "
+                  << graph.get_num_edges() << " edges." << std::endl;
+        std::cout << "Clustering loaded with " << clustering.get_num_clusters() << " clusters." << std::endl;
     }
-    
-    // No predefined vertex names
-    igraph_strvector_t predefnames;
-    igraph_strvector_init(&predefnames, 0);
-    
-    // Read the graph using the NCOL format
-    // Parameters:
-    // - graph: output graph
-    // - instream: input file
-    // - predefnames: predefined vertex names (empty in this case)
-    // - names: true to use symbolic names in the file
-    // - weights: IGRAPH_ADD_WEIGHTS_IF_PRESENT to add weights if present
-    // - directed: false for undirected graph
-    igraph_error_t err = igraph_read_graph_ncol(
-        &graph, 
-        instream, 
-        &predefnames,
-        true,  // Use symbolic names from the file
-        IGRAPH_ADD_WEIGHTS_IF_PRESENT,  // Add weights if present
-        false  // Undirected graph
-    );
-    
-    // Close the file
-    fclose(instream);
-    
-    if (err != IGRAPH_SUCCESS) {
-        std::cerr << "Failed to read graph. Error code: " << err << std::endl;
-        igraph_strvector_destroy(&predefnames);
-        return 1;
-    }
-    
-    // Print graph info
-    std::cout << "Number of vertices: " << igraph_vcount(&graph) << std::endl;
-    std::cout << "Number of edges: " << igraph_ecount(&graph) << std::endl;
-    
-    // Clean up resources
-    igraph_destroy(&graph);
-    igraph_strvector_destroy(&predefnames);
-    
+
     return 0;
 }

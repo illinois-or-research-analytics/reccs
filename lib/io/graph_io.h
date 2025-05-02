@@ -28,117 +28,52 @@ public:
      */
     static Graph load_graph_from_tsv(const std::string& filepath, 
                                       std::unordered_map<int, int>& id_to_index) {
-        // Read file into memory in one operation for faster processing
-        std::ifstream file(filepath, std::ios::ate);  // Open at end to get file size
-        if (!file.is_open()) {
-            throw std::runtime_error("Could not open file: " + filepath);
+        // Initialize igraph
+        igraph_t graph;
+        
+        // Open the input file
+        FILE* instream = fopen(argv[1], "r");
+        if (!instream) {
+            std::cerr << "Failed to open file: " << argv[1] << std::endl;
+            return 1;
         }
         
-        // Pre-allocate memory for the file content
-        std::streamsize size = file.tellg();
-        file.seekg(0, std::ios::beg);
-        std::vector<char> buffer(size);
-        file.read(buffer.data(), size);
-        file.close();
+        // No predefined vertex names
+        igraph_strvector_t predefnames;
+        igraph_strvector_init(&predefnames, 0);
         
-        // Process the buffer in parallel to extract unique vertex IDs
-        std::vector<std::string> lines;
-        std::istringstream stream(std::string(buffer.data(), size));
-        std::string line;
-        while (std::getline(stream, line)) {
-            lines.push_back(line);
+        // Read the graph using the NCOL format
+        // Parameters:
+        // - graph: output graph
+        // - instream: input file
+        // - predefnames: predefined vertex names (empty in this case)
+        // - names: true to use symbolic names in the file
+        // - weights: IGRAPH_ADD_WEIGHTS_IF_PRESENT to add weights if present
+        // - directed: false for undirected graph
+        igraph_error_t err = igraph_read_graph_ncol(
+            &graph, 
+            instream, 
+            &predefnames,
+            true,  // Use symbolic names from the file
+            IGRAPH_ADD_WEIGHTS_IF_PRESENT,  // Add weights if present
+            false  // Undirected graph
+        );
+        
+        // Close the file
+        fclose(instream);
+        
+        if (err != IGRAPH_SUCCESS) {
+            std::cerr << "Failed to read graph. Error code: " << err << std::endl;
+            igraph_strvector_destroy(&predefnames);
+            return 1;
         }
 
-        // Use thread-safe set for collecting unique IDs
-        std::mutex set_mutex;
-        std::set<int> unique_ids;
-        
-        #pragma omp parallel
-        {
-            std::set<int> local_ids;
-            
-            #pragma omp for nowait
-            for (size_t i = 0; i < lines.size(); i++) {
-                std::istringstream iss(lines[i]);
-                int source, target;
-                if (iss >> source >> target) {
-                    local_ids.insert(source);
-                    local_ids.insert(target);
-                }
-            }
-            
-            // Merge local sets into the global set
-            std::lock_guard<std::mutex> lock(set_mutex);
-            unique_ids.insert(local_ids.begin(), local_ids.end());
-        }
-        
-        // Create mapping from original IDs to consecutive indices
-        int index = 0;
-        for (int id : unique_ids) {
-            id_to_index[id] = index++;
-        }
-        
-        // Create a temporary edge list file with remapped IDs
-        std::string temp_file = filepath + ".temp";
-        std::ofstream temp_out(temp_file);
-        
-        // Process and write in parallel using local buffers
-        #pragma omp parallel
-        {
-            std::ostringstream local_buffer;
-            
-            #pragma omp for nowait
-            for (size_t i = 0; i < lines.size(); i++) {
-                std::istringstream iss(lines[i]);
-                int source, target;
-                if (iss >> source >> target) {
-                    local_buffer << id_to_index[source] << "\t" << id_to_index[target] << "\n";
-                }
-                
-                // Avoid excessive memory usage by periodically flushing large buffers
-                if (i % 100000 == 0 && local_buffer.tellp() > 0) {
-                    #pragma omp critical
-                    {
-                        temp_out << local_buffer.str();
-                    }
-                    local_buffer.str("");
-                    local_buffer.clear();
-                }
-            }
-            
-            // Final flush of remaining data
-            if (local_buffer.tellp() > 0) {
-                #pragma omp critical
-                {
-                    temp_out << local_buffer.str();
-                }
-            }
-        }
-        
-        temp_out.close();
-        
-        // Create igraph object
-        igraph_t graph_primitive;
-        
-        // Use igraph's built-in file reading functionality
-        FILE* file_ptr = fopen(temp_file.c_str(), "r");
-        if (!file_ptr) {
-            throw std::runtime_error("Could not open temporary file");
-        }
-        
-        // Read the graph from the file with consecutive IDs
-        if (igraph_read_graph_edgelist(&graph_primitive, file_ptr, 0, IGRAPH_UNDIRECTED)) {
-            fclose(file_ptr);
-            std::remove(temp_file.c_str());
-            throw std::runtime_error("Failed to parse graph from file: " + filepath);
-        }
-        fclose(file_ptr);
-        std::remove(temp_file.c_str());
-        
-        // Create a new Graph object
-        Graph graph(graph_primitive, id_to_index);
-        
-        return graph;
+        // Destroy the predefined names vector
+        igraph_strvector_destroy(&predefnames);
+
+        // Convert igraph to our Graph class
+        Graph g;
+        g.set_graph(graph);
     }
     
     /**

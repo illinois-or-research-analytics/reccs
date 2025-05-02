@@ -31,7 +31,7 @@ public:
     }
 
     /**
-    * @brief Contstructor from an igraph object.
+     * @brief Contstructor from an igraph object.
      */
     Graph(const igraph_t& g, std::unordered_map<int, int> id_to_index) : graph(g), id_to_index(id_to_index) {
         num_nodes = igraph_vcount(&graph);
@@ -43,6 +43,14 @@ public:
             index_to_id[pair.second] = pair.first;
         }
     }
+
+    /**
+     * @brief Setter for the graph.
+     */
+    void set_graph(const igraph_t& g) {
+        graph = g;
+    }
+
 
     /**
      * @brief Get the number of nodes in the graph.
