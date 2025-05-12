@@ -31,11 +31,14 @@ public:
         // Initialize igraph
         igraph_t graph;
         
+        // Cast filepath to a C string
+        const char* c_filepath = filepath.c_str();
+
         // Open the input file
-        FILE* instream = fopen(argv[1], "r");
+        FILE* instream = fopen(c_filepath, "r");
         if (!instream) {
-            std::cerr << "Failed to open file: " << argv[1] << std::endl;
-            return 1;
+            std::cerr << "Failed to open file: " << filepath << std::endl;
+            exit(1);
         }
         
         // No predefined vertex names
@@ -65,15 +68,14 @@ public:
         if (err != IGRAPH_SUCCESS) {
             std::cerr << "Failed to read graph. Error code: " << err << std::endl;
             igraph_strvector_destroy(&predefnames);
-            return 1;
+            exit(1);
         }
 
         // Destroy the predefined names vector
-        igraph_strvector_destroy(&predefnames);
+        // igraph_strvector_destroy(&predefnames);
 
         // Convert igraph to our Graph class
-        Graph g;
-        g.set_graph(graph);
+        Graph g(graph);
     }
     
     /**

@@ -8,12 +8,12 @@
 #include <igraph/igraph.h>
 
 #include "io/graph_io.h"
-#include "utils/subgraph_extractor.h"
-#include "algorithm/sbm.h"
-#include "algorithm/sbm_gt.h"
+// #include "utils/subgraph_extractor.h"
+// #include "algorithm/sbm.h"
+// #include "algorithm/sbm_gt.h"
 
-#include <networkit/graph/Graph.hpp>
-#include <networkit/io/EdgeListReader.hpp>
+// #include <networkit/graph/Graph.hpp>
+// #include <networkit/io/EdgeListReader.hpp>
 
 
 #include <iostream>
