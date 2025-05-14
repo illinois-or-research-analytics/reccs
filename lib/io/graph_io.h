@@ -6,13 +6,14 @@
 #include <thread>
 #include <atomic>
 #include <iostream>
+#include <iomanip>
 #include <unordered_map>
 #include <utility>
 #include <chrono>
 #include "../data_structures/graph.h"
 #include "../data_structures/mapped_file.h"
 
-CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int num_threads = std::thread::hardware_concurrency()) {
+CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int num_threads = std::thread::hardware_concurrency(), bool verbose = false) {
     CSRGraph graph;
     MappedFile file;
     
@@ -24,14 +25,17 @@ CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int 
     const char* data = file.data();
     size_t file_size = file.size();
     
-    // First pass: Count unique nodes and collect edges
-    std::cout << "Step 1: Parsing file and collecting edges..." << std::endl;
+    if (verbose) {
+        std::cout << "File size: " << file_size / (1024 * 1024) << " MB" << std::endl;
+        std::cout << "Step 1: Parsing file and collecting edges..." << std::endl;
+    }
     
     std::vector<std::thread> threads;
     std::vector<std::unordered_map<uint64_t, uint32_t>> local_node_maps(num_threads);
     std::vector<std::vector<std::pair<uint64_t, uint64_t>>> local_edges(num_threads);
     
     std::atomic<size_t> next_chunk_start(0);
+    std::atomic<size_t> processed_bytes(0);
     size_t chunk_size = 64 * 1024 * 1024; // 64 MB chunks
     
     auto process_chunk = [&](int thread_id) {
@@ -84,6 +88,15 @@ CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int 
                 while (ptr < end && *ptr != '\n') ptr++;
                 if (ptr < end) ptr++; // Skip newline
             }
+            
+            // Update progress
+            processed_bytes.fetch_add(chunk_end - chunk_begin);
+            
+            if (verbose && thread_id == 0) {
+                double progress = static_cast<double>(processed_bytes) / file_size * 100.0;
+                std::cout << "\rParsing progress: " << std::fixed << std::setprecision(1) 
+                          << progress << "%" << std::flush;
+            }
         }
     };
     
@@ -97,9 +110,21 @@ CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int 
         t.join();
     }
     
-    // Merge node maps and assign IDs
-    std::cout << "Step 2: Building node ID mapping..." << std::endl;
+    if (verbose) {
+        std::cout << std::endl; // End the progress line
+        std::cout << "Step 2: Building node ID mapping..." << std::endl;
+    }
+    
     std::unordered_map<uint64_t, uint32_t>& node_map = graph.node_map;
+    
+    // Report on thread distribution if verbose
+    if (verbose) {
+        for (int i = 0; i < num_threads; i++) {
+            std::cout << "Thread " << i << " processed " 
+                      << local_edges[i].size() << " edges and found "
+                      << local_node_maps[i].size() << " unique nodes." << std::endl;
+        }
+    }
     
     for (const auto& local_map : local_node_maps) {
         for (const auto& entry : local_map) {
@@ -129,10 +154,11 @@ CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int 
         graph.num_edges += local_edge_list.size();
     }
     
-    std::cout << "Found " << graph.num_nodes << " nodes and " << graph.num_edges << " undirected edges." << std::endl;
-    
-    // Count degrees in parallel
-    std::cout << "Step 3: Counting node degrees..." << std::endl;
+    if (verbose) {
+        std::cout << "Found " << graph.num_nodes << " nodes and " 
+                  << graph.num_edges << " undirected edges." << std::endl;
+        std::cout << "Step 3: Counting node degrees..." << std::endl;
+    }
     
     // Use atomic vector for thread-safe degree counting
     std::vector<std::atomic<uint32_t>> degree(graph.num_nodes);
@@ -162,8 +188,11 @@ CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int 
         t.join();
     }
     
+    if (verbose) {
+        std::cout << "Step 4: Building row pointers..." << std::endl;
+    }
+    
     // Build row pointers (prefix sum)
-    std::cout << "Step 4: Building row pointers..." << std::endl;
     graph.row_ptr.resize(graph.num_nodes + 1);
     graph.row_ptr[0] = 0;
     
@@ -171,8 +200,11 @@ CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int 
         graph.row_ptr[i + 1] = graph.row_ptr[i] + degree[i].load(std::memory_order_relaxed);
     }
     
+    if (verbose) {
+        std::cout << "Step 5: Building CSR structure in parallel..." << std::endl;
+    }
+    
     // Prepare for parallel CSR building
-    std::cout << "Step 5: Building CSR structure in parallel..." << std::endl;
     
     // Allocate column indices vector
     size_t total_directed_edges = graph.row_ptr.back();
@@ -186,8 +218,12 @@ CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int 
     
     // Launch threads to fill CSR
     threads.clear();
+    std::atomic<size_t> edges_processed(0);
     
     auto fill_csr = [&](int thread_id) {
+        size_t local_edges_count = local_edges[thread_id].size();
+        size_t local_processed = 0;
+        
         for (const auto& edge : local_edges[thread_id]) {
             uint32_t src_id = node_map[edge.first];
             uint32_t dst_id = node_map[edge.second];
@@ -199,6 +235,21 @@ CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int 
             // Add edge dst -> src (undirected)
             uint32_t pos2 = graph.row_ptr[dst_id] + offsets[dst_id].fetch_add(1, std::memory_order_relaxed);
             graph.col_idx[pos2] = src_id;
+            
+            local_processed++;
+            
+            // Update progress
+            if (verbose && thread_id == 0 && local_processed % 1000000 == 0) {
+                size_t total_processed = edges_processed.fetch_add(1000000);
+                double progress = static_cast<double>(total_processed) / graph.num_edges * 100.0;
+                std::cout << "\rCSR building progress: " << std::fixed << std::setprecision(1) 
+                          << progress << "%" << std::flush;
+            }
+        }
+        
+        // Account for any remaining edges
+        if (local_processed % 1000000 != 0) {
+            edges_processed.fetch_add(local_processed % 1000000);
         }
     };
     
@@ -210,11 +261,17 @@ CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int 
         t.join();
     }
     
+    if (verbose) {
+        std::cout << std::endl; // End the progress line
+    }
+    
     // Free memory from edge lists
     local_edges.clear();
     
-    std::cout << "Loaded undirected graph with " << graph.num_nodes << " nodes and " 
-              << graph.num_edges << " edges (" << total_directed_edges << " directed edges in CSR)" << std::endl;
+    if (verbose) {
+        std::cout << "Loaded undirected graph with " << graph.num_nodes << " nodes and " 
+                  << graph.num_edges << " edges (" << total_directed_edges << " directed edges in CSR)" << std::endl;
+    }
     
     return graph;
 }

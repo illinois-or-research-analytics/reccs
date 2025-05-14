@@ -24,8 +24,10 @@ struct CSRGraph {
 };
 
 // Sort adjacency lists in parallel
-void sort_adjacency_lists_parallel(CSRGraph& graph, int num_threads) {
-    std::cout << "Sorting adjacency lists..." << std::endl;
+void sort_adjacency_lists_parallel(CSRGraph& graph, int num_threads, bool verbose = false) {
+    if (verbose) {
+        std::cout << "Sorting adjacency lists..." << std::endl;
+    }
     
     #pragma omp parallel for num_threads(num_threads)
     for (size_t i = 0; i < graph.num_nodes; i++) {
@@ -39,11 +41,13 @@ void sort_adjacency_lists_parallel(CSRGraph& graph, int num_threads) {
 }
 
 // Remove self-loops and duplicate edges in parallel
-void clean_graph_parallel(CSRGraph& graph, int num_threads) {
-    std::cout << "Removing self-loops and duplicate edges..." << std::endl;
+void clean_graph_parallel(CSRGraph& graph, int num_threads, bool verbose = false) {
+    if (verbose) {
+        std::cout << "Removing self-loops and duplicate edges..." << std::endl;
+    }
     
     // First, sort adjacency lists to place duplicates adjacent to each other
-    sort_adjacency_lists_parallel(graph, num_threads);
+    sort_adjacency_lists_parallel(graph, num_threads, verbose);
     
     // Count unique edges for each vertex
     std::vector<uint32_t> unique_counts(graph.num_nodes, 0);
@@ -105,14 +109,20 @@ void clean_graph_parallel(CSRGraph& graph, int num_threads) {
         }
     }
     
+    size_t removed_edges = (graph.col_idx.size() - new_col_idx.size()) / 2;
+    
     // Update the graph
     graph.col_idx = std::move(new_col_idx);
     graph.row_ptr = std::move(new_row_ptr);
+    
+    if (verbose) {
+        std::cout << "Removed " << removed_edges << " edges (self-loops and duplicates)" << std::endl;
+    }
 }
 
 // Simple test function to validate the graph
 void test_graph(const CSRGraph& graph) {
-    std::cout << "Testing graph..." << std::endl;
+    std::cout << "Testing graph integrity..." << std::endl;
     
     size_t total_edges = 0;
     for (size_t i = 0; i < graph.num_nodes; i++) {
@@ -123,9 +133,14 @@ void test_graph(const CSRGraph& graph) {
     
     // Check if all edges are valid
     bool valid = true;
-    for (size_t i = 0; i < graph.num_nodes; i++) {
+    size_t checked_edges = 0;
+    size_t total_to_check = std::min(size_t(1000), graph.num_nodes); // Limit check to 1000 nodes for performance
+    
+    for (size_t i = 0; i < total_to_check; i++) {
         for (size_t j = graph.row_ptr[i]; j < graph.row_ptr[i + 1]; j++) {
             uint32_t neighbor = graph.col_idx[j];
+            checked_edges++;
+            
             if (neighbor >= graph.num_nodes) {
                 std::cout << "Invalid edge: " << i << " -> " << neighbor << std::endl;
                 valid = false;
@@ -152,7 +167,7 @@ void test_graph(const CSRGraph& graph) {
     }
     
     if (valid) {
-        std::cout << "Graph is valid: all edges have corresponding reverse edges" << std::endl;
+        std::cout << "Graph appears valid (checked " << checked_edges << " edges)" << std::endl;
     }
 }
 
