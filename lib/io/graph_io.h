@@ -6,6 +6,7 @@
 #include <thread>
 #include <atomic>
 #include <iostream>
+#include <fstream>  
 #include <iomanip>
 #include <unordered_map>
 #include <utility>
@@ -274,6 +275,52 @@ CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int 
     }
     
     return graph;
+}
+
+// Save graph to a TSV edgelist file
+bool save_graph_edgelist(const std::string& filename, const CSRGraph& graph, bool verbose = false) {
+    std::ofstream outfile(filename);
+    if (!outfile.is_open()) {
+        std::cerr << "Failed to open output file: " << filename << std::endl;
+        return false;
+    }
+    
+    if (verbose) {
+        std::cout << "Saving graph to: " << filename << std::endl;
+    }
+    
+    size_t edges_written = 0;
+    size_t total_edges = graph.num_edges;
+    
+    // For each node, write its edges (but only in one direction to avoid duplicates)
+    for (uint32_t node_id = 0; node_id < graph.num_nodes; ++node_id) {
+        uint64_t original_node_id = graph.id_map[node_id];
+        
+        for (uint32_t i = graph.row_ptr[node_id]; i < graph.row_ptr[node_id + 1]; ++i) {
+            uint32_t neighbor_id = graph.col_idx[i];
+            
+            // Only write edges where node_id < neighbor_id to avoid duplicates
+            if (node_id < neighbor_id) {
+                uint64_t original_neighbor_id = graph.id_map[neighbor_id];
+                outfile << original_node_id << "\t" << original_neighbor_id << "\n";
+                
+                edges_written++;
+                if (verbose && edges_written % 1000000 == 0) {
+                    double progress = 100.0 * edges_written / total_edges;
+                    std::cout << "\rSaving edges: " << std::fixed << std::setprecision(1) 
+                              << progress << "%" << std::flush;
+                }
+            }
+        }
+    }
+    
+    if (verbose) {
+        std::cout << std::endl; // End progress line
+        std::cout << "Saved " << edges_written << " edges" << std::endl;
+    }
+    
+    outfile.close();
+    return true;
 }
 
 #endif // GRAPH_IO_H
