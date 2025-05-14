@@ -7,11 +7,13 @@
 #include <filesystem>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <vector>
+#include <fcntl.h>
+
 
 /**
  * @class Orchestrator
- * @brief Handles orchestration of the RECCS workflow, including splitting graphs and running 
- *        various analysis scripts in parallel.
+ * @brief Handles orchestration of the RECCS workflow, optimized to run processes in parallel when possible.
  */
 class Orchestrator {
 public:
@@ -41,21 +43,28 @@ public:
     int run() {
         auto start_time = std::chrono::high_resolution_clock::now();
         
-        // Step 1: Run the splitter script
-        if (!splitGraph()) {
+        if (verbose_) {
+            std::cout << "Starting RECCS workflow with optimized parallelization" << std::endl;
+            std::cout << "Input graph: " << graph_filename_ << std::endl;
+            std::cout << "Input clustering: " << cluster_filename_ << std::endl;
+            std::cout << "Temporary directory: " << temp_dir_ << std::endl;
+        }
+        
+        // Step 1: Run the splitter and stats in parallel
+        if (!runFirstStage()) {
             return 1;
         }
         
         if (verbose_) {
-            auto split_end_time = std::chrono::high_resolution_clock::now();
-            auto split_duration = std::chrono::duration_cast<std::chrono::seconds>(
-                split_end_time - start_time).count();
-            std::cout << "Graph splitting completed in " << split_duration << " seconds" << std::endl;
-            std::cout << "Step 2: Processing clustered and unclustered components in parallel..." << std::endl;
+            auto stage1_end_time = std::chrono::high_resolution_clock::now();
+            auto stage1_duration = std::chrono::duration_cast<std::chrono::seconds>(
+                stage1_end_time - start_time).count();
+            std::cout << "First stage completed in " << stage1_duration << " seconds" << std::endl;
+            std::cout << "Running SBM generation for both components..." << std::endl;
         }
         
-        // Step 2: Run stats and sbm in parallel
-        if (!runParallelProcessing()) {
+        // Step 2: Run SBM generation on both components
+        if (!runSecondStage()) {
             return 1;
         }
         
@@ -86,33 +95,97 @@ private:
     std::string clustered_clusters_;
     std::string unclustered_edges_;
     std::string unclustered_clusters_;
+    
+    // Track process IDs
+    std::vector<pid_t> pids_;
 
     /**
-     * @brief Run the graph splitter script
+     * @brief Execute a command in a child process with proper stream handling
+     * 
+     * @param command The command to execute
+     * @param description Description for verbose output
+     * @return pid_t Process ID of the child, or -1 on error
+     */
+    pid_t executeCommand(const std::string& command, const std::string& description) {
+        pid_t pid = fork();
+        
+        if (pid == 0) {
+            // Child process
+            
+            // Close stdin to prevent the child from blocking on input
+            close(STDIN_FILENO);
+            
+            // Redirect stdout/stderr to /dev/null if not verbose
+            if (!verbose_) {
+                int dev_null = open("/dev/null", O_WRONLY);
+                dup2(dev_null, STDOUT_FILENO);
+                dup2(dev_null, STDERR_FILENO);
+                close(dev_null);
+            }
+            
+            if (verbose_) {
+                std::cout << "[" << description << "] Executing: " << command << std::endl;
+            }
+            
+            // Execute the command
+            int status = system(command.c_str());
+            
+            // Use _exit instead of exit to avoid flushing stdio buffers
+            _exit(WEXITSTATUS(status));
+        }
+        
+        return pid;
+    }
+
+    /**
+     * @brief Run the first stage: splitter and stats in parallel
      * 
      * @return bool true if successful, false otherwise
      */
-    bool splitGraph() {
-        if (verbose_) {
-            std::cout << "Step 1: Running graph splitter..." << std::endl;
-        }
-        
+    bool runFirstStage() {
+        // Prepare commands
         std::string splitter_command = "python3 extlib/splitter.py";
         splitter_command += " -f " + graph_filename_;
         splitter_command += " -c " + cluster_filename_;
         splitter_command += " -o " + temp_dir_;
         if (verbose_) {
             splitter_command += " -v";
-            std::cout << "Executing: " << splitter_command << std::endl;
         }
         
-        int splitter_status = system(splitter_command.c_str());
-        if (splitter_status != 0) {
-            std::cerr << "Error: Splitter script failed with status " << splitter_status << std::endl;
+        std::string stats_command = "python3 extlib/stats.py";
+        stats_command += " -i " + graph_filename_;
+        stats_command += " -e " + cluster_filename_;
+        stats_command += " -o " + temp_dir_ + "/clustered_stats.csv";
+        if (verbose_) {
+            stats_command += " -v";
+        }
+        
+        // Execute commands in parallel
+        pid_t splitter_pid = executeCommand(splitter_command, "Splitter");
+        if (splitter_pid < 0) {
+            std::cerr << "Error: Failed to fork for splitter process" << std::endl;
             return false;
         }
         
-        // Define paths to output files
+        pid_t stats_pid = executeCommand(stats_command, "Stats");
+        if (stats_pid < 0) {
+            std::cerr << "Error: Failed to fork for stats process" << std::endl;
+            return false;
+        }
+        
+        // Store PIDs
+        pids_.push_back(stats_pid);
+        
+        // Wait for the splitter process to complete (we need its output for the next stage)
+        int splitter_status;
+        waitpid(splitter_pid, &splitter_status, 0);
+        
+        if (WEXITSTATUS(splitter_status) != 0) {
+            std::cerr << "Error: Splitter process failed with status " << WEXITSTATUS(splitter_status) << std::endl;
+            return false;
+        }
+        
+        // Define paths to output files from the splitter
         clustered_edges_ = temp_dir_ + "/non_singleton_edges.tsv";
         clustered_clusters_ = temp_dir_ + "/non_singleton_clusters.tsv";
         unclustered_edges_ = temp_dir_ + "/singleton_edges.tsv";
@@ -131,89 +204,47 @@ private:
     }
     
     /**
-     * @brief Run the stats and SBM scripts in parallel
+     * @brief Run the second stage: SBM generation for both components
      * 
      * @return bool true if successful, false otherwise
      */
-    bool runParallelProcessing() {
-        pid_t pid1, pid2, pid3;
+    bool runSecondStage() {
+        // Prepare commands
+        std::string sbm_clustered_command = "python3 extlib/gen_SBM.py";
+        sbm_clustered_command += " -f " + clustered_edges_;
+        sbm_clustered_command += " -c " + clustered_clusters_;
+        sbm_clustered_command += " -o " + temp_dir_ + "/clustered_sbm";
         
-        // Fork for stats on clustered subgraph
-        pid1 = fork();
-        if (pid1 == 0) {
-            // Child process 1: Run stats on the clustered subgraph
-            std::string stats_command = "python3 extlib/stats.py";
-            stats_command += " -i " + clustered_edges_;
-            stats_command += " -e " + clustered_clusters_;
-            stats_command += " -o " + temp_dir_ + "/clustered_stats.csv";
-            if (verbose_) {
-                stats_command += " -v";
-                std::cout << "Child process 1 executing: " << stats_command << std::endl;
-            }
-            
-            int stats_status = system(stats_command.c_str());
-            exit(stats_status);
-        } else if (pid1 < 0) {
-            std::cerr << "Error: Failed to fork for stats process" << std::endl;
-            return false;
-        }
+        std::string sbm_unclustered_command = "python3 extlib/gen_SBM.py";
+        sbm_unclustered_command += " -f " + unclustered_edges_;
+        sbm_unclustered_command += " -c " + unclustered_clusters_;
+        sbm_unclustered_command += " -o " + temp_dir_ + "/unclustered_sbm";
         
-        // Fork for SBM on clustered subgraph
-        pid2 = fork();
-        if (pid2 == 0) {
-            // Child process 2: Run SBM on the clustered subgraph
-            std::string sbm_clustered_command = "python3 extlib/gen_SBM.py";
-            sbm_clustered_command += " -f " + clustered_edges_;
-            sbm_clustered_command += " -c " + clustered_clusters_;
-            sbm_clustered_command += " -o " + temp_dir_ + "/clustered_sbm";
-            if (verbose_) {
-                std::cout << "Child process 2 executing: " << sbm_clustered_command << std::endl;
-            }
-            
-            int sbm_clustered_status = system(sbm_clustered_command.c_str());
-            exit(sbm_clustered_status);
-        } else if (pid2 < 0) {
+        // Execute commands in parallel
+        pid_t clustered_sbm_pid = executeCommand(sbm_clustered_command, "SBM-Clustered");
+        if (clustered_sbm_pid < 0) {
             std::cerr << "Error: Failed to fork for clustered SBM process" << std::endl;
             return false;
         }
         
-        // Fork for SBM on unclustered subgraph
-        pid3 = fork();
-        if (pid3 == 0) {
-            // Child process 3: Run SBM on the unclustered subgraph
-            std::string sbm_unclustered_command = "python3 extlib/gen_SBM.py";
-            sbm_unclustered_command += " -f " + unclustered_edges_;
-            sbm_unclustered_command += " -c " + unclustered_clusters_;
-            sbm_unclustered_command += " -o " + temp_dir_ + "/unclustered_sbm";
-            if (verbose_) {
-                std::cout << "Child process 3 executing: " << sbm_unclustered_command << std::endl;
-            }
-            
-            int sbm_unclustered_status = system(sbm_unclustered_command.c_str());
-            exit(sbm_unclustered_status);
-        } else if (pid3 < 0) {
+        pid_t unclustered_sbm_pid = executeCommand(sbm_unclustered_command, "SBM-Unclustered");
+        if (unclustered_sbm_pid < 0) {
             std::cerr << "Error: Failed to fork for unclustered SBM process" << std::endl;
             return false;
         }
         
-        // Wait for all child processes to complete
-        int status1, status2, status3;
-        waitpid(pid1, &status1, 0);
-        waitpid(pid2, &status2, 0);
-        waitpid(pid3, &status3, 0);
+        // Store PIDs
+        pids_.push_back(clustered_sbm_pid);
+        pids_.push_back(unclustered_sbm_pid);
         
-        // Check process exit statuses
-        if (WEXITSTATUS(status1) != 0) {
-            std::cerr << "Error: Stats process failed with status " << WEXITSTATUS(status1) << std::endl;
-            return false;
-        }
-        if (WEXITSTATUS(status2) != 0) {
-            std::cerr << "Error: Clustered SBM process failed with status " << WEXITSTATUS(status2) << std::endl;
-            return false;
-        }
-        if (WEXITSTATUS(status3) != 0) {
-            std::cerr << "Error: Unclustered SBM process failed with status " << WEXITSTATUS(status3) << std::endl;
-            return false;
+        // Wait for all remaining child processes to complete
+        int status;
+        for (pid_t pid : pids_) {
+            waitpid(pid, &status, 0);
+            if (WEXITSTATUS(status) != 0) {
+                std::cerr << "Error: Process " << pid << " failed with status " << WEXITSTATUS(status) << std::endl;
+                return false;
+            }
         }
         
         return true;
