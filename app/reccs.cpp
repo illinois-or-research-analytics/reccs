@@ -13,6 +13,7 @@
 #include "../lib/algorithms/graph_splitter.h"
 #include "../lib/algorithms/graph_merger.h"
 #include "../lib/algorithms/sbm.h"
+#include "../lib/algorithms/degree_enforcer.h"
 
 namespace fs = std::filesystem;
 
@@ -230,13 +231,25 @@ int main(int argc, char** argv) {
                     std::cout << "Unclustered SBM generation completed successfully" << std::endl;
                 }
                 
+                // Enforce minimum cluster degrees in the clustered SBM
+                if (verbose) {
+                    std::cout << "Enforcing minimum cluster degrees in clustered SBM..." << std::endl;
+                }
+
+                // Set a minimum degree floor of 1 - clusters will have at least this many internal connections
+                uint32_t min_degree_floor = 1;
+
+                // Create a modified version of the clustered SBM with enforced minimum degrees
+                CSRGraph modified_clustered_sbm = DegreeEnforcer::enforce_min_cluster_degrees(
+                    clustered_sbm, clustered_graph, clustering, clustered_node_map, min_degree_floor, verbose);
+
                 // Create paths
                 std::string clustered_sbm_filename = base_name + "_clustered_sbm.tsv";
                 std::string unclustered_sbm_filename = unclustered_sbm_dir + "/syn_sbm.tsv";
                 std::string merged_sbm_filename = base_name + "_merged_sbm.tsv";
-                
-                // Save the clustered SBM
-                save_graph_edgelist(clustered_sbm_filename, clustered_sbm, verbose);
+
+                // Save the modified clustered SBM
+                save_graph_edgelist(clustered_sbm_filename, modified_clustered_sbm, verbose);
                 
                 if (verbose) {
                     std::cout << "Saved clustered SBM to: " << clustered_sbm_filename << std::endl;

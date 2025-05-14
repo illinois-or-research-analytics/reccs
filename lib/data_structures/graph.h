@@ -21,6 +21,39 @@ struct CSRGraph {
     // Graph info
     size_t num_nodes = 0;
     size_t num_edges = 0; // This counts each undirected edge once
+
+    // Add an edge to the graph
+    void add_edge(uint32_t from, uint32_t to) {
+        // Check if nodes exist
+        if (from >= num_nodes || to >= num_nodes) {
+            return;
+        }
+        
+        // Check if edge already exists
+        for (uint32_t i = row_ptr[from]; i < row_ptr[from + 1]; ++i) {
+            if (col_idx[i] == to) {
+                return; // Edge already exists
+            }
+        }
+        
+        // We need to shift all row pointers after 'from' to accommodate the new edge
+        for (uint32_t i = from + 1; i <= num_nodes; ++i) {
+            row_ptr[i]++;
+        }
+        
+        // Insert the new edge
+        col_idx.insert(col_idx.begin() + row_ptr[from], to);
+        
+        // Add the reverse edge (for undirected graph)
+        for (uint32_t i = to + 1; i <= num_nodes; ++i) {
+            row_ptr[i]++;
+        }
+        
+        col_idx.insert(col_idx.begin() + row_ptr[to], from);
+        
+        // Update edge count
+        num_edges++;
+    }
 };
 
 // Sort adjacency lists in parallel
