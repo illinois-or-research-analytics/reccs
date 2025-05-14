@@ -11,6 +11,7 @@
 #include "../lib/io/graph_io.h"
 #include "../lib/io/cluster_io.h"
 #include "../lib/algorithms/graph_splitter.h"
+#include "../lib/algorithms/graph_merger.h"
 #include "../lib/algorithms/sbm.h"
 
 namespace fs = std::filesystem;
@@ -216,22 +217,46 @@ int main(int argc, char** argv) {
                 std::cout << "Waiting for SBM generation processes to complete..." << std::endl;
             }
             
+            // Only load the clustered SBM into memory
             CSRGraph clustered_sbm = SBMGenerator::wait_and_load_sbm(
                 clustered_pid, clustered_sbm_dir, num_threads, verbose);
                 
-            CSRGraph unclustered_sbm = SBMGenerator::wait_and_load_sbm(
-                unclustered_pid, unclustered_sbm_dir, num_threads, verbose);
+            // For the unclustered SBM, just wait for it to complete
+            int status;
+            waitpid(unclustered_pid, &status, 0);
             
-            // Save the SBM graphs
-            std::string clustered_sbm_filename = base_name + "_clustered_sbm.tsv";
-            save_graph_edgelist(clustered_sbm_filename, clustered_sbm, verbose);
-            
-            std::string unclustered_sbm_filename = base_name + "_unclustered_sbm.tsv";
-            save_graph_edgelist(unclustered_sbm_filename, unclustered_sbm, verbose);
-            
-            if (verbose) {
-                std::cout << "Saved clustered SBM to: " << clustered_sbm_filename << std::endl;
-                std::cout << "Saved unclustered SBM to: " << unclustered_sbm_filename << std::endl;
+            if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+                if (verbose) {
+                    std::cout << "Unclustered SBM generation completed successfully" << std::endl;
+                }
+                
+                // Create paths
+                std::string clustered_sbm_filename = base_name + "_clustered_sbm.tsv";
+                std::string unclustered_sbm_filename = unclustered_sbm_dir + "/syn_sbm.tsv";
+                std::string merged_sbm_filename = base_name + "_merged_sbm.tsv";
+                
+                // Save the clustered SBM
+                save_graph_edgelist(clustered_sbm_filename, clustered_sbm, verbose);
+                
+                if (verbose) {
+                    std::cout << "Saved clustered SBM to: " << clustered_sbm_filename << std::endl;
+                }
+                
+                // Create the merged SBM by appending the clustered SBM to the unclustered SBM
+                if (verbose) {
+                    std::cout << "Creating merged SBM by appending clustered SBM to unclustered SBM..." << std::endl;
+                }
+                
+                if (GraphMerger::merge_clustered_to_unclustered(
+                        clustered_sbm, unclustered_sbm_filename, merged_sbm_filename, verbose)) {
+                    if (verbose) {
+                        std::cout << "Successfully created merged SBM: " << merged_sbm_filename << std::endl;
+                    }
+                } else {
+                    std::cerr << "Failed to create merged SBM" << std::endl;
+                }
+            } else {
+                std::cerr << "Unclustered SBM generation failed" << std::endl;
             }
         }
         
