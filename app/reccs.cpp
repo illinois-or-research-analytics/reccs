@@ -3,17 +3,9 @@
 #include <omp.h>
 #include <string>
 #include <iomanip>
-#include <sys/wait.h>
-#include <unistd.h>
 #include <filesystem>
-#include "../lib/data_structures/graph.h"
-#include "../lib/data_structures/clustering.h"
-#include "../lib/io/graph_io.h"
-#include "../lib/io/cluster_io.h"
-#include "../lib/algorithms/graph_splitter.h"
-#include "../lib/algorithms/graph_merger.h"
-#include "../lib/algorithms/sbm.h"
-#include "../lib/algorithms/degree_enforcer.h"
+#include <thread>
+#include "../lib/utils/orchestrator.h"
 
 namespace fs = std::filesystem;
 
@@ -55,9 +47,27 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+
+    // Check if clustering file is provided
+    if (cluster_filename.empty()) {
+        std::cerr << "Error: Clustering file (-c) is required" << std::endl;
+        print_usage(argv[0]);
+        return 1;
+    }
+
+    // Create a temp directory for intermediate files
+    if (verbose) {
+        std::cout << "Creating temporary directory for intermediate files..." << std::endl;
+    }
+    std::string temp_dir = "temp";
+    if (!fs::exists(temp_dir)) {
+        fs::create_directories(temp_dir);
+    }
     
     // Set OpenMP threads
     omp_set_num_threads(num_threads);
     
-    return 0;
+    // Create and run the orchestrator
+    Orchestrator orchestrator(graph_filename, cluster_filename, temp_dir, verbose);
+    return orchestrator.run();
 }
