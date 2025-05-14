@@ -1,267 +1,326 @@
-#pragma once
+#ifndef GRAPH_IO_H
+#define GRAPH_IO_H
 
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <set> 
-#include <map>
-
-// Include OpenMP for parallel processing
-#include <omp.h>
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
 #include <string>
-#include <mutex>
+#include <vector>
+#include <thread>
+#include <atomic>
+#include <iostream>
+#include <fstream>  
+#include <iomanip>
+#include <unordered_map>
+#include <utility>
+#include <chrono>
+#include "../data_structures/graph.h"
+#include "../data_structures/mapped_file.h"
 
-#include "data_structures/graph.h"
-#include "data_structures/clustering.h"
-#include "data_structures/edge_iterator.h"
-
-class graph_io {
-public:
-    /**
-     * Loads a graph from a TSV file containing an edgelist.
-     * Each line contains: source_id \t target_id
-     * 
-     * @param filepath Path to the TSV file
-     */
-    static Graph load_graph_from_tsv(const std::string& filepath, 
-                                      std::unordered_map<int, int>& id_to_index) {
-        // Read file into memory in one operation for faster processing
-        std::ifstream file(filepath, std::ios::ate);  // Open at end to get file size
-        if (!file.is_open()) {
-            throw std::runtime_error("Could not open file: " + filepath);
-        }
-        
-        // Pre-allocate memory for the file content
-        std::streamsize size = file.tellg();
-        file.seekg(0, std::ios::beg);
-        std::vector<char> buffer(size);
-        file.read(buffer.data(), size);
-        file.close();
-        
-        // Process the buffer in parallel to extract unique vertex IDs
-        std::vector<std::string> lines;
-        std::istringstream stream(std::string(buffer.data(), size));
-        std::string line;
-        while (std::getline(stream, line)) {
-            lines.push_back(line);
-        }
-
-        // Use thread-safe set for collecting unique IDs
-        std::mutex set_mutex;
-        std::set<int> unique_ids;
-        
-        #pragma omp parallel
-        {
-            std::set<int> local_ids;
-            
-            #pragma omp for nowait
-            for (size_t i = 0; i < lines.size(); i++) {
-                std::istringstream iss(lines[i]);
-                int source, target;
-                if (iss >> source >> target) {
-                    local_ids.insert(source);
-                    local_ids.insert(target);
-                }
-            }
-            
-            // Merge local sets into the global set
-            std::lock_guard<std::mutex> lock(set_mutex);
-            unique_ids.insert(local_ids.begin(), local_ids.end());
-        }
-        
-        // Create mapping from original IDs to consecutive indices
-        int index = 0;
-        for (int id : unique_ids) {
-            id_to_index[id] = index++;
-        }
-        
-        // Create a temporary edge list file with remapped IDs
-        std::string temp_file = filepath + ".temp";
-        std::ofstream temp_out(temp_file);
-        
-        // Process and write in parallel using local buffers
-        #pragma omp parallel
-        {
-            std::ostringstream local_buffer;
-            
-            #pragma omp for nowait
-            for (size_t i = 0; i < lines.size(); i++) {
-                std::istringstream iss(lines[i]);
-                int source, target;
-                if (iss >> source >> target) {
-                    local_buffer << id_to_index[source] << "\t" << id_to_index[target] << "\n";
-                }
-                
-                // Avoid excessive memory usage by periodically flushing large buffers
-                if (i % 100000 == 0 && local_buffer.tellp() > 0) {
-                    #pragma omp critical
-                    {
-                        temp_out << local_buffer.str();
-                    }
-                    local_buffer.str("");
-                    local_buffer.clear();
-                }
-            }
-            
-            // Final flush of remaining data
-            if (local_buffer.tellp() > 0) {
-                #pragma omp critical
-                {
-                    temp_out << local_buffer.str();
-                }
-            }
-        }
-        
-        temp_out.close();
-        
-        // Create igraph object
-        igraph_t graph_primitive;
-        
-        // Use igraph's built-in file reading functionality
-        FILE* file_ptr = fopen(temp_file.c_str(), "r");
-        if (!file_ptr) {
-            throw std::runtime_error("Could not open temporary file");
-        }
-        
-        // Read the graph from the file with consecutive IDs
-        if (igraph_read_graph_edgelist(&graph_primitive, file_ptr, 0, IGRAPH_UNDIRECTED)) {
-            fclose(file_ptr);
-            std::remove(temp_file.c_str());
-            throw std::runtime_error("Failed to parse graph from file: " + filepath);
-        }
-        fclose(file_ptr);
-        std::remove(temp_file.c_str());
-        
-        // Create a new Graph object
-        Graph graph(graph_primitive, id_to_index);
-        
+CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int num_threads = std::thread::hardware_concurrency(), bool verbose = false) {
+    CSRGraph graph;
+    MappedFile file;
+    
+    if (!file.open(filename)) {
+        std::cerr << "Failed to open file: " << filename << std::endl;
         return graph;
     }
     
-    /**
-     * Loads a clustering from a TSV file.
-     * Each line contains: node_id \t cluster_id
-     * 
-     * @param filepath Path to the TSV file
-     */
-    static Clustering load_clustering_from_tsv(const std::string& filepath) {
-        // Read file into memory in one operation
-        std::ifstream file(filepath, std::ios::ate);  // Open at end to get file size
-        if (!file.is_open()) {
-            throw std::runtime_error("Could not open file: " + filepath);
-        }
-        
-        // Pre-allocate memory for the file content
-        std::streamsize size = file.tellg();
-        file.seekg(0, std::ios::beg);
-        std::vector<char> buffer(size);
-        file.read(buffer.data(), size);
-        file.close();
-        
-        // Process the buffer
-        Clustering clustering;
-        std::unordered_map<int, std::vector<int>> tmp_clusters;
-        
-        const char* p = buffer.data();
-        const char* end = p + size;
-        
-        // Count number of lines to pre-allocate vectors
-        size_t line_count = std::count(p, end, '\n');
-        
-        while (p < end) {
-            // Parse node_id
-            int node_id = 0;
-            while (p < end && *p >= '0' && *p <= '9') {
-                node_id = node_id * 10 + (*p - '0');
-                p++;
-            }
-            
-            // Skip whitespace
-            while (p < end && (*p == ' ' || *p == '\t')) p++;
-            
-            // Parse cluster_id
-            int cluster_id = 0;
-            while (p < end && *p >= '0' && *p <= '9') {
-                cluster_id = cluster_id * 10 + (*p - '0');
-                p++;
-            }
-            
-            // Add to clustering
-            if (!tmp_clusters.count(cluster_id)) {
-                tmp_clusters[cluster_id].reserve(line_count / 10);  // Rough estimate
-            }
-            tmp_clusters[cluster_id].push_back(node_id);
-            
-            // Skip to next line
-            while (p < end && *p != '\n') p++;
-            if (p < end) p++;  // Skip newline
-        }
-        
-        // Build the clustering from temp structure
-        for (const auto& [cluster_id, nodes] : tmp_clusters) {
-            for (int node_id : nodes) {
-                clustering.add_node_to_cluster(node_id, cluster_id);
-            }
-        }
-        
-        return clustering;
+    const char* data = file.data();
+    size_t file_size = file.size();
+    
+    if (verbose) {
+        std::cout << "File size: " << file_size / (1024 * 1024) << " MB" << std::endl;
+        std::cout << "Step 1: Parsing file and collecting edges..." << std::endl;
     }
-
-    /**
-     * Writes a graph to a TSV file containing an edgelist.
-     * Each line contains: source_id \t target_id
-     * 
-     * @param graph The graph to write
-     * @param output_file Path to the output TSV file
-     */
-    static void write_graph_to_tsv(const Graph& graph, const std::string& output_file) {
-        // Open the output file
-        EdgeIterator edge_iterator(graph);
-        std::ofstream output(output_file);
-        if (!output.is_open()) {
-            std::cerr << "Error opening output file: " << output_file << std::endl;
-            exit(1);
-        }
+    
+    std::vector<std::thread> threads;
+    std::vector<std::unordered_map<uint64_t, uint32_t>> local_node_maps(num_threads);
+    std::vector<std::vector<std::pair<uint64_t, uint64_t>>> local_edges(num_threads);
+    
+    std::atomic<size_t> next_chunk_start(0);
+    std::atomic<size_t> processed_bytes(0);
+    size_t chunk_size = 64 * 1024 * 1024; // 64 MB chunks
+    
+    auto process_chunk = [&](int thread_id) {
+        local_edges[thread_id].reserve(10000000); // Pre-allocate space for edges
         
-        // Write the edges to the file
-        for (edge_iterator.reset(); edge_iterator.has_next(); edge_iterator.next()) {
-            igraph_integer_t from, to;
-            edge_iterator.get(from, to);
+        while (true) {
+            // Get next chunk to process
+            size_t chunk_begin = next_chunk_start.fetch_add(chunk_size);
+            if (chunk_begin >= file_size) break;
             
-            output << from << "\t" << to << "\n";
-        }
-
-        // Close the output file
-        output.close();
-    }
-
-    /**
-     * Writes a clustering to a TSV file.
-     * Each line contains: node_id \t cluster_id
-     * 
-     * @param clustering The clustering to write
-     * @param output_file Path to the output TSV file
-     */
-    static void write_clustering_to_tsv(const Clustering& clustering, const std::string& output_file) {
-        // Open the output file
-        std::ofstream output(output_file);
-        if (!output.is_open()) {
-            std::cerr << "Error opening output file: " << output_file << std::endl;
-            exit(1);
-        }
-        
-        // Write the clustering to the file
-        std::unordered_map<int, std::vector<int>> clusters = clustering.get_clusters();
-        for (const auto& cluster : clusters) {
-            for (int node_id : cluster.second) {
-                output << node_id << "\t" << cluster.first << "\n";
+            size_t chunk_end = std::min(chunk_begin + chunk_size, file_size);
+            
+            // Adjust chunk_begin to start at beginning of a line
+            if (chunk_begin > 0) {
+                while (chunk_begin < file_size && data[chunk_begin-1] != '\n') {
+                    chunk_begin++;
+                }
+            }
+            
+            // Process the chunk
+            const char* ptr = data + chunk_begin;
+            const char* end = data + chunk_end;
+            
+            while (ptr < end) {
+                // Parse source node
+                uint64_t src = 0;
+                while (ptr < end && *ptr >= '0' && *ptr <= '9') {
+                    src = src * 10 + (*ptr - '0');
+                    ptr++;
+                }
+                
+                // Skip tab
+                if (ptr < end && *ptr == '\t') ptr++;
+                
+                // Parse target node
+                uint64_t dst = 0;
+                while (ptr < end && *ptr >= '0' && *ptr <= '9') {
+                    dst = dst * 10 + (*ptr - '0');
+                    ptr++;
+                }
+                
+                // Add to local maps
+                local_node_maps[thread_id][src] = 0; // Temporary value
+                local_node_maps[thread_id][dst] = 0; // Temporary value
+                
+                // Store the edge
+                local_edges[thread_id].emplace_back(src, dst);
+                
+                // Skip to next line
+                while (ptr < end && *ptr != '\n') ptr++;
+                if (ptr < end) ptr++; // Skip newline
+            }
+            
+            // Update progress
+            processed_bytes.fetch_add(chunk_end - chunk_begin);
+            
+            if (verbose && thread_id == 0) {
+                double progress = static_cast<double>(processed_bytes) / file_size * 100.0;
+                std::cout << "\rParsing progress: " << std::fixed << std::setprecision(1) 
+                          << progress << "%" << std::flush;
             }
         }
-
-        // Close the output file
-        output.close();
+    };
+    
+    // Launch threads for the first pass
+    for (int i = 0; i < num_threads; i++) {
+        threads.emplace_back(process_chunk, i);
     }
-};
+    
+    // Wait for threads to finish
+    for (auto& t : threads) {
+        t.join();
+    }
+    
+    if (verbose) {
+        std::cout << std::endl; // End the progress line
+        std::cout << "Step 2: Building node ID mapping..." << std::endl;
+    }
+    
+    std::unordered_map<uint64_t, uint32_t>& node_map = graph.node_map;
+    
+    // Report on thread distribution if verbose
+    if (verbose) {
+        for (int i = 0; i < num_threads; i++) {
+            std::cout << "Thread " << i << " processed " 
+                      << local_edges[i].size() << " edges and found "
+                      << local_node_maps[i].size() << " unique nodes." << std::endl;
+        }
+    }
+    
+    for (const auto& local_map : local_node_maps) {
+        for (const auto& entry : local_map) {
+            node_map[entry.first] = 0;
+        }
+    }
+    
+    // Clear local node maps to free memory
+    local_node_maps.clear();
+    
+    // Assign sequential IDs
+    uint32_t next_id = 0;
+    for (auto& entry : node_map) {
+        entry.second = next_id++;
+    }
+    
+    graph.num_nodes = node_map.size();
+    
+    // Create reverse mapping
+    graph.id_map.resize(graph.num_nodes);
+    for (const auto& entry : node_map) {
+        graph.id_map[entry.second] = entry.first;
+    }
+    
+    // Calculate total edges (undirected)
+    for (const auto& local_edge_list : local_edges) {
+        graph.num_edges += local_edge_list.size();
+    }
+    
+    if (verbose) {
+        std::cout << "Found " << graph.num_nodes << " nodes and " 
+                  << graph.num_edges << " undirected edges." << std::endl;
+        std::cout << "Step 3: Counting node degrees..." << std::endl;
+    }
+    
+    // Use atomic vector for thread-safe degree counting
+    std::vector<std::atomic<uint32_t>> degree(graph.num_nodes);
+    for (auto& d : degree) {
+        d.store(0, std::memory_order_relaxed);
+    }
+    
+    // Launch threads to count degrees
+    threads.clear();
+    
+    auto count_degrees = [&](int thread_id) {
+        for (const auto& edge : local_edges[thread_id]) {
+            uint32_t src_id = node_map[edge.first];
+            uint32_t dst_id = node_map[edge.second];
+            
+            // Increment degree for both source and destination (undirected graph)
+            degree[src_id].fetch_add(1, std::memory_order_relaxed);
+            degree[dst_id].fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    
+    for (int i = 0; i < num_threads; i++) {
+        threads.emplace_back(count_degrees, i);
+    }
+    
+    for (auto& t : threads) {
+        t.join();
+    }
+    
+    if (verbose) {
+        std::cout << "Step 4: Building row pointers..." << std::endl;
+    }
+    
+    // Build row pointers (prefix sum)
+    graph.row_ptr.resize(graph.num_nodes + 1);
+    graph.row_ptr[0] = 0;
+    
+    for (size_t i = 0; i < graph.num_nodes; i++) {
+        graph.row_ptr[i + 1] = graph.row_ptr[i] + degree[i].load(std::memory_order_relaxed);
+    }
+    
+    if (verbose) {
+        std::cout << "Step 5: Building CSR structure in parallel..." << std::endl;
+    }
+    
+    // Prepare for parallel CSR building
+    
+    // Allocate column indices vector
+    size_t total_directed_edges = graph.row_ptr.back();
+    graph.col_idx.resize(total_directed_edges);
+    
+    // Use atomic offsets for thread-safe insertion
+    std::vector<std::atomic<uint32_t>> offsets(graph.num_nodes);
+    for (size_t i = 0; i < graph.num_nodes; i++) {
+        offsets[i].store(0, std::memory_order_relaxed);
+    }
+    
+    // Launch threads to fill CSR
+    threads.clear();
+    std::atomic<size_t> edges_processed(0);
+    
+    auto fill_csr = [&](int thread_id) {
+        size_t local_edges_count = local_edges[thread_id].size();
+        size_t local_processed = 0;
+        
+        for (const auto& edge : local_edges[thread_id]) {
+            uint32_t src_id = node_map[edge.first];
+            uint32_t dst_id = node_map[edge.second];
+            
+            // Add edge src -> dst
+            uint32_t pos1 = graph.row_ptr[src_id] + offsets[src_id].fetch_add(1, std::memory_order_relaxed);
+            graph.col_idx[pos1] = dst_id;
+            
+            // Add edge dst -> src (undirected)
+            uint32_t pos2 = graph.row_ptr[dst_id] + offsets[dst_id].fetch_add(1, std::memory_order_relaxed);
+            graph.col_idx[pos2] = src_id;
+            
+            local_processed++;
+            
+            // Update progress
+            if (verbose && thread_id == 0 && local_processed % 1000000 == 0) {
+                size_t total_processed = edges_processed.fetch_add(1000000);
+                double progress = static_cast<double>(total_processed) / graph.num_edges * 100.0;
+                std::cout << "\rCSR building progress: " << std::fixed << std::setprecision(1) 
+                          << progress << "%" << std::flush;
+            }
+        }
+        
+        // Account for any remaining edges
+        if (local_processed % 1000000 != 0) {
+            edges_processed.fetch_add(local_processed % 1000000);
+        }
+    };
+    
+    for (int i = 0; i < num_threads; i++) {
+        threads.emplace_back(fill_csr, i);
+    }
+    
+    for (auto& t : threads) {
+        t.join();
+    }
+    
+    if (verbose) {
+        std::cout << std::endl; // End the progress line
+    }
+    
+    // Free memory from edge lists
+    local_edges.clear();
+    
+    if (verbose) {
+        std::cout << "Loaded undirected graph with " << graph.num_nodes << " nodes and " 
+                  << graph.num_edges << " edges (" << total_directed_edges << " directed edges in CSR)" << std::endl;
+    }
+    
+    return graph;
+}
+
+// Save graph to a TSV edgelist file
+bool save_graph_edgelist(const std::string& filename, const CSRGraph& graph, bool verbose = false) {
+    std::ofstream outfile(filename);
+    if (!outfile.is_open()) {
+        std::cerr << "Failed to open output file: " << filename << std::endl;
+        return false;
+    }
+    
+    if (verbose) {
+        std::cout << "Saving graph to: " << filename << std::endl;
+    }
+    
+    size_t edges_written = 0;
+    size_t total_edges = graph.num_edges;
+    
+    // For each node, write its edges (but only in one direction to avoid duplicates)
+    for (uint32_t node_id = 0; node_id < graph.num_nodes; ++node_id) {
+        uint64_t original_node_id = graph.id_map[node_id];
+        
+        for (uint32_t i = graph.row_ptr[node_id]; i < graph.row_ptr[node_id + 1]; ++i) {
+            uint32_t neighbor_id = graph.col_idx[i];
+            
+            // Only write edges where node_id < neighbor_id to avoid duplicates
+            if (node_id < neighbor_id) {
+                uint64_t original_neighbor_id = graph.id_map[neighbor_id];
+                outfile << original_node_id << "\t" << original_neighbor_id << "\n";
+                
+                edges_written++;
+                if (verbose && edges_written % 1000000 == 0) {
+                    double progress = 100.0 * edges_written / total_edges;
+                    std::cout << "\rSaving edges: " << std::fixed << std::setprecision(1) 
+                              << progress << "%" << std::flush;
+                }
+            }
+        }
+    }
+    
+    if (verbose) {
+        std::cout << std::endl; // End progress line
+        std::cout << "Saved " << edges_written << " edges" << std::endl;
+    }
+    
+    outfile.close();
+    return true;
+}
+
+#endif // GRAPH_IO_H

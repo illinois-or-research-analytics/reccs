@@ -1,7 +1,12 @@
 .vscode/
 
+*_sbm.tsv
+
+*temp*
+
 # build
 build/
+alt_build/
 
 # Prerequisites
 *.d
@@ -34,4 +39,5 @@ build/
 # Executables
 *.exe
 *.out
+*.err
 *.app

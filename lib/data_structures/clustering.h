@@ -1,187 +1,201 @@
 #ifndef CLUSTERING_H
 #define CLUSTERING_H
 
-#include <unordered_map>
 #include <vector>
-#include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
+#include <string>
+#include <cstdint>
+#include <iostream>
+#include "graph.h"
 
-/**
- * @brief Class that efficiently stores mappings from node IDs to cluster IDs.
- */
-class Clustering {
-private:
-    std::unordered_map<int, int> node_to_cluster;  // Maps node_id to cluster_id
-
-public:
-    /**
-     * @brief Default constructor.
-     */
-    Clustering() = default;
-
-    /**
-     * @brief Get all nodes that have been assigned to clusters.
-     * 
-     * @return A vector containing all node IDs with cluster assignments.
-     */
-    std::vector<int> get_nodes() const {
-        std::vector<int> nodes;
-        nodes.reserve(node_to_cluster.size());
-        for (const auto& [node_id, _] : node_to_cluster) {
-            nodes.push_back(node_id);
+// Dual representation of clustering information
+struct Clustering {
+    // Maps node ID to cluster index (internal representation)
+    std::vector<uint32_t> node_to_cluster_idx;
+    
+    // Maps cluster index to the set of nodes in that cluster
+    std::vector<std::unordered_set<uint32_t>> cluster_nodes;
+    
+    // Maps cluster index to original cluster ID (string)
+    std::vector<std::string> cluster_ids;
+    
+    // Maps original cluster ID to internal cluster index
+    std::unordered_map<std::string, uint32_t> cluster_id_to_idx;
+    
+    // Get all nodes in a specific cluster by original ID
+    const std::unordered_set<uint32_t>& get_cluster_nodes(const std::string& cluster_id) const {
+        static const std::unordered_set<uint32_t> empty_set;
+        auto it = cluster_id_to_idx.find(cluster_id);
+        if (it == cluster_id_to_idx.end()) {
+            return empty_set;
         }
-        return nodes;
-    }
-
-    /**
-     * @brief Adds a node to a specific cluster.
-     * 
-     * @param node_id The ID of the node to add.
-     * @param cluster_id The ID of the cluster to add the node to.
-     */
-    void add_node_to_cluster(int node_id, int cluster_id) {
-        node_to_cluster[node_id] = cluster_id;
-    }
-
-    /**
-     * @brief Get the cluster ID for a given node.
-     * 
-     * @param node_id The ID of the node to query.
-     * @return The cluster ID of the node.
-     * @throws std::out_of_range if the node is not assigned to any cluster.
-     */
-    int get_cluster(int node_id) const {
-        return node_to_cluster.at(node_id);
-    }
-
-    /**
-     * @brief Check if a node has been assigned to a cluster.
-     * 
-     * @param node_id The ID of the node to check.
-     * @return true if the node is assigned to a cluster, false otherwise.
-     */
-    bool has_node(int node_id) const {
-        return node_to_cluster.find(node_id) != node_to_cluster.end();
-    }
-
-    /**
-     * @brief Get the number of nodes assigned to clusters.
-     * 
-     * @return The number of nodes with cluster assignments.
-     */
-    size_t size() const {
-        return node_to_cluster.size();
-    }
-
-    /**
-     * @brief Clear all node-to-cluster mappings.
-     */
-    void clear() {
-        node_to_cluster.clear();
-    }
-
-    /**
-     * @brief Get the number of unique clusters.
-     * 
-     * @return The number of unique clusters.
-     */
-    int get_num_clusters() const {
-        std::unordered_set<int> clusters;
-        for (const auto& [node, cluster] : node_to_cluster) {
-            clusters.insert(cluster);
-        }
-        return clusters.size();
-    } 
-
-    /**
-     * @brief Get the size of a specific cluster.
-     * 
-     * @param cluster_id The ID of the cluster to query.
-     * @return The number of nodes in the specified cluster.
-     */
-    int get_cluster_size(int cluster_id) const {
-        int size = 0;
-        for (const auto& [node, cluster] : node_to_cluster) {
-            if (cluster == cluster_id) {
-                size++;
-            }
-        }
-        return size;
-    }
-
-    /**
-     * @brief Get all singleton nodes (nodes in their own single-node cluster).
-     * 
-     * @return A vector of node IDs that are singletons.
-     */
-    std::vector<int> get_singletons() const {
-        std::vector<int> singletons;
-        std::unordered_map<int, std::vector<int>> cluster_to_nodes;
-        
-        // Group nodes by cluster
-        for (const auto& [node_id, cluster_id] : node_to_cluster) {
-            cluster_to_nodes[cluster_id].push_back(node_id);
-        }
-        
-        // Find clusters with only one node
-        for (const auto& [cluster_id, nodes] : cluster_to_nodes) {
-            if (nodes.size() == 1) {
-                singletons.push_back(nodes[0]);
-            }
-        }
-        
-        return singletons;
-    }
-
-    /**
-     * @brief Get the number of singleton nodes.
-     * 
-     * @return The number of singleton nodes.
-     */
-    int get_num_singletons() const {
-        return get_singletons().size();
-    }
-
-    /**
-     * @brief Remove all singleton nodes from the clustering.
-     */
-    void remove_singletons() {
-        for (int node_id : get_singletons()) {
-            node_to_cluster.erase(node_id);
-        }
-    }
-
-    /**
-     * @brief Get all clusters and their member nodes.
-     * 
-     * @return An unordered map mapping cluster IDs to vectors of node IDs.
-     */
-    std::unordered_map<int, std::vector<int>> get_clusters() const {
-        std::unordered_map<int, std::vector<int>> cluster_to_nodes;
-        
-        // Group nodes by cluster
-        for (const auto& [node_id, cluster_id] : node_to_cluster) {
-            cluster_to_nodes[cluster_id].push_back(node_id);
-        }
-        
-        return cluster_to_nodes;
+        return cluster_nodes[it->second];
     }
     
-    /**
-     * @brief Return a vector for cluster assignments
-     * This is for SBM input
-     * 
-     * @return Cluster assignments vector
-     */
-    std::vector<int> get_block_assignments() const {
-        std::vector<int> assignments;
-        assignments.reserve(node_to_cluster.size());
-        
-        for (const auto& [node_id, cluster_id] : node_to_cluster) {
-            assignments.emplace_back(cluster_id);
+    // Get all nodes in a specific cluster by internal index
+    const std::unordered_set<uint32_t>& get_cluster_nodes_by_idx(uint32_t cluster_idx) const {
+        static const std::unordered_set<uint32_t> empty_set;
+        if (cluster_idx >= cluster_nodes.size()) {
+            return empty_set;
+        }
+        return cluster_nodes[cluster_idx];
+    }
+    
+    // Get the cluster ID for a specific node
+    std::string get_node_cluster(uint32_t node_id) const {
+        if (node_id >= node_to_cluster_idx.size() || 
+            node_to_cluster_idx[node_id] == UINT32_MAX || 
+            node_to_cluster_idx[node_id] >= cluster_ids.size()) {
+            return "";
+        }
+        return cluster_ids[node_to_cluster_idx[node_id]];
+    }
+    
+    // Check if a cluster exists by original ID
+    bool has_cluster(const std::string& cluster_id) const {
+        auto it = cluster_id_to_idx.find(cluster_id);
+        if (it == cluster_id_to_idx.end()) {
+            return false;
+        }
+        return !cluster_nodes[it->second].empty();
+    }
+    
+    // Get internal cluster index from original ID
+    uint32_t get_cluster_idx(const std::string& cluster_id) const {
+        auto it = cluster_id_to_idx.find(cluster_id);
+        if (it == cluster_id_to_idx.end()) {
+            return UINT32_MAX;
+        }
+        return it->second;
+    }
+    
+    // Get original cluster ID from internal index
+    const std::string& get_cluster_id(uint32_t cluster_idx) const {
+        static const std::string empty_string;
+        if (cluster_idx >= cluster_ids.size()) {
+            return empty_string;
+        }
+        return cluster_ids[cluster_idx];
+    }
+    
+    // Add a new cluster or get existing cluster index
+    uint32_t add_or_get_cluster(const std::string& cluster_id) {
+        auto it = cluster_id_to_idx.find(cluster_id);
+        if (it != cluster_id_to_idx.end()) {
+            return it->second;
         }
         
-        return assignments;
-    }    
+        // Add new cluster
+        uint32_t new_idx = cluster_ids.size();
+        cluster_id_to_idx[cluster_id] = new_idx;
+        cluster_ids.push_back(cluster_id);
+        cluster_nodes.emplace_back();
+        return new_idx;
+    }
+    
+    // Assign a node to a cluster
+    void assign_node_to_cluster(uint32_t node_id, const std::string& cluster_id) {
+        // First, if node already has a cluster, remove it from that cluster
+        if (node_id < node_to_cluster_idx.size() && node_to_cluster_idx[node_id] != UINT32_MAX) {
+            uint32_t old_cluster_idx = node_to_cluster_idx[node_id];
+            if (old_cluster_idx < cluster_nodes.size()) {
+                cluster_nodes[old_cluster_idx].erase(node_id);
+            }
+        }
+        
+        // Now assign to new cluster
+        uint32_t cluster_idx = add_or_get_cluster(cluster_id);
+        node_to_cluster_idx[node_id] = cluster_idx;
+        cluster_nodes[cluster_idx].insert(node_id);
+    }
+    
+    // Reset/initialize the clustering
+    void reset(size_t num_nodes) {
+        node_to_cluster_idx.resize(num_nodes, UINT32_MAX);  // Initialize with invalid cluster indices
+        cluster_nodes.clear();
+        cluster_ids.clear();
+        cluster_id_to_idx.clear();
+    }
+    
+    // Verify that the clustering is valid (each node belongs to at most one cluster)
+    bool verify(bool verbose = false) const {
+        bool valid = true;
+        
+        // Check that each node belongs to at most one valid cluster
+        for (uint32_t node_id = 0; node_id < node_to_cluster_idx.size(); ++node_id) {
+            uint32_t cluster_idx = node_to_cluster_idx[node_id];
+            
+            // Skip unclustered nodes
+            if (cluster_idx == UINT32_MAX) {
+                continue;
+            }
+            
+            // Check that the cluster exists and contains the node
+            if (cluster_idx >= cluster_nodes.size()) {
+                if (verbose) {
+                    std::cout << "Invalid cluster index for node " << node_id << ": " 
+                              << cluster_idx << " >= " << cluster_nodes.size() << std::endl;
+                }
+                valid = false;
+                continue;
+            }
+            
+            if (cluster_nodes[cluster_idx].count(node_id) == 0) {
+                if (verbose) {
+                    std::cout << "Node " << node_id << " is assigned to cluster index " 
+                              << cluster_idx << " but not found in that cluster's node set" << std::endl;
+                }
+                valid = false;
+            }
+        }
+        
+        // Check that each cluster's nodes have the correct cluster assignment
+        for (uint32_t cluster_idx = 0; cluster_idx < cluster_nodes.size(); ++cluster_idx) {
+            for (uint32_t node_id : cluster_nodes[cluster_idx]) {
+                if (node_id >= node_to_cluster_idx.size()) {
+                    if (verbose) {
+                        std::cout << "Invalid node ID in cluster " << cluster_idx << ": " 
+                                  << node_id << " >= " << node_to_cluster_idx.size() << std::endl;
+                    }
+                    valid = false;
+                    continue;
+                }
+                
+                if (node_to_cluster_idx[node_id] != cluster_idx) {
+                    if (verbose) {
+                        std::cout << "Node " << node_id << " is in cluster index " << cluster_idx 
+                                  << " but assigned to cluster index " << node_to_cluster_idx[node_id] << std::endl;
+                    }
+                    valid = false;
+                }
+            }
+        }
+        
+        return valid;
+    }
+    
+    // Get the number of nodes that have a valid cluster assignment
+    size_t get_clustered_node_count() const {
+        size_t count = 0;
+        for (uint32_t cluster_idx : node_to_cluster_idx) {
+            if (cluster_idx != UINT32_MAX) {
+                count++;
+            }
+        }
+        return count;
+    }
+    
+    // Get the number of clusters (excluding empty ones)
+    size_t get_non_empty_cluster_count() const {
+        size_t count = 0;
+        for (const auto& nodes : cluster_nodes) {
+            if (!nodes.empty()) {
+                count++;
+            }
+        }
+        return count;
+    }
 };
 
 #endif // CLUSTERING_H
