@@ -1,9 +1,0 @@
-[submodule "extlib/igraph-cpp"]
-	path = archive/extlib/igraph-cpp
-	url = https://github.com/igraph/igraph-cpp.git
-[submodule "extlib/igraph"]
-	path = archive/extlib/igraph
-	url = https://github.com/igraph/igraph.git
-[submodule "extlib/networkit"]
-	path = archive/extlib/networkit
-	url = https://github.com/networkit/networkit.git
