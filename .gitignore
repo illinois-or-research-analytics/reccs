@@ -1,5 +1,9 @@
 .vscode/
 
+*_sbm.tsv
+
+*temp*
+
 # build
 build/
 alt_build/

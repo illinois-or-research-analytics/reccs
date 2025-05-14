@@ -199,4 +199,71 @@ Clustering load_clustering(const std::string& filename, const CSRGraph& graph,
     return clustering;
 }
 
+// Save a filtered clustering containing only nodes that exist in the given graph
+bool save_filtered_clustering(const std::string& filename, 
+    const Clustering& clustering,
+    const CSRGraph& graph,
+    const std::unordered_map<uint32_t, uint32_t>& node_map,
+    bool verbose = false) {
+    std::ofstream outfile(filename);
+    if (!outfile.is_open()) {
+        std::cerr << "Failed to open output file: " << filename << std::endl;
+        return false;
+    }
+
+    if (verbose) {
+        std::cout << "Saving filtered clustering to: " << filename << std::endl;
+    }
+
+    size_t nodes_written = 0;
+    size_t nodes_skipped = 0;
+
+    // For each node in the subgraph, write its cluster assignment if it exists
+    for (uint32_t new_node_id = 0; new_node_id < graph.num_nodes; ++new_node_id) {
+        // Get the original node ID from the graph's ID map
+        uint64_t original_node_id = graph.id_map[new_node_id];
+
+        // Find the original internal node ID from the node map
+        uint32_t original_internal_id = UINT32_MAX;
+        for (const auto& [orig_id, new_id] : node_map) {
+            if (new_id == new_node_id) {
+                original_internal_id = orig_id;
+                break;
+            }
+        }
+
+        if (original_internal_id == UINT32_MAX) {
+            // Couldn't find the original internal ID - should not happen
+            if (verbose) {
+                std::cerr << "Warning: Could not find original internal ID for node " << new_node_id << std::endl;
+            }
+            nodes_skipped++;
+            continue;
+        }
+
+        // Check if this node has a cluster assignment
+        if (original_internal_id < clustering.node_to_cluster_idx.size() && 
+            clustering.node_to_cluster_idx[original_internal_id] != UINT32_MAX) {
+
+            uint32_t cluster_idx = clustering.node_to_cluster_idx[original_internal_id];
+            const std::string& cluster_id = clustering.get_cluster_id(cluster_idx);
+
+            // Write to file: original_node_id (from graph) and cluster_id
+            outfile << original_node_id << "\t" << cluster_id << "\n";
+            nodes_written++;
+        } else {
+            nodes_skipped++;
+        }
+    }
+
+    outfile.close();
+
+    if (verbose) {
+        std::cout << "Written " << nodes_written << " node-cluster assignments" << std::endl;
+        std::cout << "Skipped " << nodes_skipped << " nodes without cluster assignments" << std::endl;
+    }
+
+    return true;
+}
+
 #endif // CLUSTER_IO_H

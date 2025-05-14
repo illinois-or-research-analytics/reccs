@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <iostream>
+#include <tuple>
 #include "../data_structures/graph.h"
 #include "../data_structures/clustering.h"
 
@@ -13,7 +14,9 @@ public:
     // Split a graph based on clustering into:
     // 1. Nodes that are part of non-singleton clusters and their internal edges
     // 2. The complement graph containing all edges not in the clustered subgraph (excluding isolated nodes)
-    static std::pair<CSRGraph, CSRGraph> split_by_clustering(
+    // Returns: (clustered_graph, complement_graph, clustered_node_map, complement_node_map)
+    static std::tuple<CSRGraph, CSRGraph, std::unordered_map<uint32_t, uint32_t>, std::unordered_map<uint32_t, uint32_t>> 
+    split_by_clustering(
         const CSRGraph& original_graph, 
         const Clustering& clustering,
         bool verbose = false) {
@@ -62,8 +65,9 @@ public:
     }
 
 private:
-    // Split graph in a single pass
-    static std::pair<CSRGraph, CSRGraph> split_graph_single_pass(
+    // Split graph in a single pass and return both subgraphs and their node mappings
+    static std::tuple<CSRGraph, CSRGraph, std::unordered_map<uint32_t, uint32_t>, std::unordered_map<uint32_t, uint32_t>> 
+    split_graph_single_pass(
         const CSRGraph& original_graph,
         const std::unordered_set<uint32_t>& clustered_nodes,
         bool verbose) {
@@ -234,7 +238,7 @@ private:
                       << complement_graph.num_edges << " edges" << std::endl;
         }
         
-        return {clustered_graph, complement_graph};
+        return {clustered_graph, complement_graph, clustered_node_map, complement_node_map};
     }
 };
 

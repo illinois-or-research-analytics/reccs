@@ -15,3 +15,6 @@ add_executable(reccs app/reccs.cpp)
 
 # Link with OpenMP
 target_link_libraries(reccs PUBLIC OpenMP::OpenMP_CXX)
+
+# Copy extlib directory to build directory
+file(COPY ${CMAKE_SOURCE_DIR}/extlib DESTINATION ${CMAKE_BINARY_DIR})

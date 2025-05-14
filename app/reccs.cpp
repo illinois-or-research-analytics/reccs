@@ -3,11 +3,17 @@
 #include <omp.h>
 #include <string>
 #include <iomanip>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <filesystem>
 #include "../lib/data_structures/graph.h"
 #include "../lib/data_structures/clustering.h"
 #include "../lib/io/graph_io.h"
 #include "../lib/io/cluster_io.h"
 #include "../lib/algorithms/graph_splitter.h"
+#include "../lib/algorithms/sbm.h"
+
+namespace fs = std::filesystem;
 
 void print_usage(const char* program_name) {
     std::cerr << "Usage: " << program_name << " <edgelist.tsv> [options]" << std::endl;
@@ -15,7 +21,6 @@ void print_usage(const char* program_name) {
     std::cerr << "  -t <num_threads>  Number of threads to use (default: hardware concurrency)" << std::endl;
     std::cerr << "  -v                Verbose mode: print detailed progress information" << std::endl;
     std::cerr << "  -c <clusters.tsv> Load clusters from TSV file" << std::endl;
-    std::cerr << "  -o <output_prefix> Prefix for output files (default: input filename without extension)" << std::endl;
 }
 
 int main(int argc, char** argv) {
@@ -27,27 +32,21 @@ int main(int argc, char** argv) {
     // Parse command line arguments
     std::string graph_filename;
     std::string cluster_filename;
-    std::string output_prefix;
     int num_threads = std::thread::hardware_concurrency();
     bool verbose = false;
     
     // First argument is the graph filename
     graph_filename = argv[1];
     
-    // Default output prefix is input filename without extension
+    // Create a base output directory name from the input filename
+    std::string base_name;
     size_t dot_pos = graph_filename.find_last_of('.');
     size_t slash_pos = graph_filename.find_last_of('/');
-    if (dot_pos != std::string::npos) {
-        if (slash_pos != std::string::npos && slash_pos > dot_pos) {
-            // No extension in the filename itself, use whole filename
-            output_prefix = graph_filename;
-        } else {
-            // Remove extension
-            output_prefix = graph_filename.substr(0, dot_pos);
-        }
+    
+    if (dot_pos != std::string::npos && (slash_pos == std::string::npos || slash_pos < dot_pos)) {
+        base_name = graph_filename.substr(0, dot_pos);
     } else {
-        // No extension
-        output_prefix = graph_filename;
+        base_name = graph_filename;
     }
     
     // Parse optional arguments
@@ -59,8 +58,6 @@ int main(int argc, char** argv) {
             num_threads = std::stoi(argv[++i]);
         } else if (arg == "-c" && i + 1 < argc) {
             cluster_filename = argv[++i];
-        } else if (arg == "-o" && i + 1 < argc) {
-            output_prefix = argv[++i];
         } else {
             std::cerr << "Unknown option: " << arg << std::endl;
             print_usage(argv[0]);
@@ -74,10 +71,19 @@ int main(int argc, char** argv) {
     if (verbose) {
         std::cout << "Using " << num_threads << " threads" << std::endl;
         std::cout << "Loading graph from file: " << graph_filename << std::endl;
-        std::cout << "Output prefix: " << output_prefix << std::endl;
     }
     
     auto total_start_time = std::chrono::steady_clock::now();
+    
+    // Create temporary directory for outputs
+    std::string temp_dir = base_name + "_temp";
+    if (!fs::exists(temp_dir)) {
+        fs::create_directories(temp_dir);
+    }
+    
+    if (verbose) {
+        std::cout << "Created temporary directory: " << temp_dir << std::endl;
+    }
     
     // Load the graph
     auto load_start_time = std::chrono::steady_clock::now();
@@ -128,10 +134,10 @@ int main(int argc, char** argv) {
             }
         }
         
-        // Split the graph (always done when clustering is loaded)
+        // Split the graph
         auto split_start_time = std::chrono::steady_clock::now();
         
-        auto [clustered_graph, unclustered_graph] = 
+        auto [clustered_graph, unclustered_graph, clustered_node_map, unclustered_node_map] = 
             GraphSplitter::split_by_clustering(graph, clustering, verbose);
         
         auto split_end_time = std::chrono::steady_clock::now();
@@ -159,23 +165,82 @@ int main(int argc, char** argv) {
                       << std::fixed << std::setprecision(2) << clustered_edge_ratio << "%" << std::endl;
         }
         
-        // Save the split graphs
-        auto save_start_time = std::chrono::steady_clock::now();
-        
-        std::string clustered_filename = output_prefix + "_clustered.tsv";
+        // Save the split graphs to temporary directory
+        std::string clustered_filename = temp_dir + "/clustered.tsv";
         save_graph_edgelist(clustered_filename, clustered_graph, verbose);
         
-        std::string unclustered_filename = output_prefix + "_unclustered.tsv";
+        std::string unclustered_filename = temp_dir + "/unclustered.tsv";
         save_graph_edgelist(unclustered_filename, unclustered_graph, verbose);
         
-        auto save_end_time = std::chrono::steady_clock::now();
-        auto save_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-            save_end_time - save_start_time);
-            
         if (verbose) {
-            std::cout << "Graph saving time: " << save_duration.count() / 1000.0 << " seconds" << std::endl;
             std::cout << "Saved clustered graph to: " << clustered_filename << std::endl;
             std::cout << "Saved unclustered graph to: " << unclustered_filename << std::endl;
+        }
+        
+        // Generate SBM models for both subgraphs
+        auto sbm_start_time = std::chrono::steady_clock::now();
+        
+        if (verbose) {
+            std::cout << "Generating SBM models for clustered and unclustered subgraphs..." << std::endl;
+        }
+        
+        // Create output directories for SBM models
+        std::string clustered_sbm_dir = temp_dir + "/clustered_sbm";
+        std::string unclustered_sbm_dir = temp_dir + "/unclustered_sbm";
+        
+        // Create filtered clustering files for each subgraph
+        std::string clustered_clustering_file = temp_dir + "/clustered_clustering.tsv";
+        std::string unclustered_clustering_file = temp_dir + "/unclustered_clustering.tsv";
+        
+        // Save filtered clusterings
+        if (verbose) {
+            std::cout << "Creating filtered clustering files for subgraphs..." << std::endl;
+        }
+        
+        // Save filtered clustering files
+        save_filtered_clustering(clustered_clustering_file, clustering, clustered_graph, clustered_node_map, verbose);
+        save_filtered_clustering(unclustered_clustering_file, clustering, unclustered_graph, unclustered_node_map, verbose);
+        
+        // Fork processes to generate SBM models in parallel
+        pid_t clustered_pid = SBMGenerator::fork_generate_sbm(
+            clustered_graph, clustered_clustering_file, clustered_sbm_dir, "clustered", verbose);
+            
+        pid_t unclustered_pid = SBMGenerator::fork_generate_sbm(
+            unclustered_graph, unclustered_clustering_file, unclustered_sbm_dir, "unclustered", verbose);
+            
+        if (clustered_pid < 0 || unclustered_pid < 0) {
+            std::cerr << "Error forking processes for SBM generation" << std::endl;
+        } else {
+            // Wait for both processes to complete and load the resulting graphs
+            if (verbose) {
+                std::cout << "Waiting for SBM generation processes to complete..." << std::endl;
+            }
+            
+            CSRGraph clustered_sbm = SBMGenerator::wait_and_load_sbm(
+                clustered_pid, clustered_sbm_dir, num_threads, verbose);
+                
+            CSRGraph unclustered_sbm = SBMGenerator::wait_and_load_sbm(
+                unclustered_pid, unclustered_sbm_dir, num_threads, verbose);
+            
+            // Save the SBM graphs
+            std::string clustered_sbm_filename = base_name + "_clustered_sbm.tsv";
+            save_graph_edgelist(clustered_sbm_filename, clustered_sbm, verbose);
+            
+            std::string unclustered_sbm_filename = base_name + "_unclustered_sbm.tsv";
+            save_graph_edgelist(unclustered_sbm_filename, unclustered_sbm, verbose);
+            
+            if (verbose) {
+                std::cout << "Saved clustered SBM to: " << clustered_sbm_filename << std::endl;
+                std::cout << "Saved unclustered SBM to: " << unclustered_sbm_filename << std::endl;
+            }
+        }
+        
+        auto sbm_end_time = std::chrono::steady_clock::now();
+        auto sbm_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            sbm_end_time - sbm_start_time);
+            
+        if (verbose) {
+            std::cout << "SBM generation time: " << sbm_duration.count() / 1000.0 << " seconds" << std::endl;
         }
     }
     
