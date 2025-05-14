@@ -8,11 +8,17 @@
 #include <algorithm>
 #include <atomic>
 #include <omp.h>
+#include <utility>
 
-// CSR representation for undirected graph
-struct CSRGraph {
-    std::vector<uint32_t> row_ptr;  // Offsets for each node's edge list
-    std::vector<uint32_t> col_idx;  // Target nodes
+// Double-Indexed (DI) representation for undirected graph
+struct DIGraph {
+    // Edge Index Array
+    std::vector<uint32_t> src; // Source vertex array
+    std::vector<uint32_t> dst; // Destination vertex array
+    
+    // Vertex Index Array
+    std::vector<int32_t> str; // Starting position in edge arrays for each vertex
+    std::vector<uint32_t> nei; // Number of edges for each vertex
     
     // Node ID mapping (if needed)
     std::unordered_map<uint64_t, uint32_t> node_map;
@@ -21,7 +27,19 @@ struct CSRGraph {
     // Graph info
     size_t num_nodes = 0;
     size_t num_edges = 0; // This counts each undirected edge once
-
+    
+    // Initialize an empty graph with a specified number of nodes
+    void init(size_t nodes) {
+        num_nodes = nodes;
+        // Initialize vertex index arrays
+        str.resize(num_nodes, -1); // -1 indicates no edges
+        nei.resize(num_nodes, 0);
+        
+        // Edge arrays will be populated as edges are added
+        src.clear();
+        dst.clear();
+    }
+    
     // Add an edge to the graph
     void add_edge(uint32_t from, uint32_t to) {
         // Check if nodes exist
@@ -29,140 +47,186 @@ struct CSRGraph {
             return;
         }
         
-        // Check if edge already exists
-        for (uint32_t i = row_ptr[from]; i < row_ptr[from + 1]; ++i) {
-            if (col_idx[i] == to) {
-                return; // Edge already exists
+        // Check if edge already exists (this is an O(nei[from]) operation)
+        for (uint32_t i = 0; i < nei[from]; ++i) {
+            if (str[from] != -1) {
+                uint32_t edge_index = str[from] + i;
+                if (edge_index < dst.size() && dst[edge_index] == to) {
+                    return; // Edge already exists
+                }
             }
         }
         
-        // We need to shift all row pointers after 'from' to accommodate the new edge
-        for (uint32_t i = from + 1; i <= num_nodes; ++i) {
-            row_ptr[i]++;
-        }
+        // Add the edge (we'll sort and rebuild later)
+        src.push_back(from);
+        dst.push_back(to);
         
-        // Insert the new edge
-        col_idx.insert(col_idx.begin() + row_ptr[from], to);
+        // For undirected graph, add the reverse edge too
+        src.push_back(to);
+        dst.push_back(from);
         
-        // Add the reverse edge (for undirected graph)
-        for (uint32_t i = to + 1; i <= num_nodes; ++i) {
-            row_ptr[i]++;
-        }
-        
-        col_idx.insert(col_idx.begin() + row_ptr[to], from);
-        
-        // Update edge count
+        // Update edge count (only counting once for the undirected edge)
         num_edges++;
+    }
+    
+    // Build the vertex index arrays after all edges have been added
+    void build_index(int num_threads = 1, bool verbose = false) {
+        if (verbose) {
+            std::cout << "Building DI graph index..." << std::endl;
+        }
+        
+        // First, create edge pairs for sorting
+        std::vector<std::pair<std::pair<uint32_t, uint32_t>, uint32_t>> edges;
+        edges.reserve(src.size());
+        
+        for (uint32_t i = 0; i < src.size(); i++) {
+            edges.push_back({{src[i], dst[i]}, i});
+        }
+        
+        // Sort edges by source vertex, then by destination vertex
+        #pragma omp parallel num_threads(num_threads)
+        {
+            #pragma omp single
+            {
+                std::sort(edges.begin(), edges.end());
+            }
+        }
+        
+        // Create new sorted arrays
+        // Create new sorted arrays
+        std::vector<uint32_t> new_src(src.size());
+        std::vector<uint32_t> new_dst(dst.size());
+        
+        #pragma omp parallel for num_threads(num_threads)
+        for (uint32_t i = 0; i < edges.size(); i++) {
+            new_src[i] = edges[i].first.first;
+            new_dst[i] = edges[i].first.second;
+        }
+        
+        // Replace the old arrays with the sorted ones
+        src = std::move(new_src);
+        dst = std::move(new_dst);
+        
+        // Reset vertex index arrays
+        #pragma omp parallel for num_threads(num_threads)
+        for (size_t i = 0; i < num_nodes; i++) {
+            str[i] = -1;
+            nei[i] = 0;
+        }
+        
+        // Count neighbors for each vertex (first pass)
+        #pragma omp parallel for num_threads(num_threads)
+        for (uint32_t i = 0; i < src.size(); i++) {
+            #pragma omp atomic
+            nei[src[i]]++;
+        }
+        
+        // Compute starting positions (sequential, but fast)
+        int32_t pos = 0;
+        for (uint32_t v = 0; v < num_nodes; v++) {
+            if (nei[v] > 0) {
+            str[v] = pos;
+            pos += nei[v];
+            nei[v] = 0; // Reset for second pass
+            }
+        }
+        
+        // Build final neighbors count (second pass)
+        #pragma omp parallel for num_threads(num_threads)
+        for (uint32_t i = 0; i < src.size(); i++) {
+            uint32_t v = src[i];
+            #pragma omp atomic
+            nei[v]++;
+        }
+        
+        if (verbose) {
+            std::cout << "DI graph index built with " << num_edges << " undirected edges" << std::endl;
+        }
     }
 };
 
-// Sort adjacency lists in parallel
-void sort_adjacency_lists_parallel(CSRGraph& graph, int num_threads, bool verbose = false) {
-    if (verbose) {
-        std::cout << "Sorting adjacency lists..." << std::endl;
-    }
-    
-    #pragma omp parallel for num_threads(num_threads)
-    for (size_t i = 0; i < graph.num_nodes; i++) {
-        uint32_t start = graph.row_ptr[i];
-        uint32_t end = graph.row_ptr[i + 1];
-        
-        if (end > start) {
-            std::sort(&graph.col_idx[start], &graph.col_idx[end]);
-        }
-    }
-}
-
 // Remove self-loops and duplicate edges in parallel
-void clean_graph_parallel(CSRGraph& graph, int num_threads, bool verbose = false) {
+void clean_graph_parallel(DIGraph& graph, int num_threads, bool verbose = false) {
     if (verbose) {
         std::cout << "Removing self-loops and duplicate edges..." << std::endl;
     }
     
-    // First, sort adjacency lists to place duplicates adjacent to each other
-    sort_adjacency_lists_parallel(graph, num_threads, verbose);
+    // We'll rebuild the graph from scratch
+    std::vector<uint32_t> new_src;
+    std::vector<uint32_t> new_dst;
+    size_t new_edges = 0;
     
-    // Count unique edges for each vertex
-    std::vector<uint32_t> unique_counts(graph.num_nodes, 0);
-    
-    #pragma omp parallel for num_threads(num_threads)
-    for (size_t i = 0; i < graph.num_nodes; i++) {
-        uint32_t start = graph.row_ptr[i];
-        uint32_t end = graph.row_ptr[i + 1];
+    // Process each vertex
+    #pragma omp parallel num_threads(num_threads)
+    {
+        std::vector<uint32_t> local_src;
+        std::vector<uint32_t> local_dst;
+        size_t local_edges = 0;
         
-        if (start == end) continue; // No edges
-        
-        uint32_t last = UINT32_MAX; // Initialize to an impossible node ID
-        uint32_t count = 0;
-        
-        for (uint32_t j = start; j < end; j++) {
-            uint32_t neighbor = graph.col_idx[j];
+        #pragma omp for schedule(dynamic, 1000)
+        for (size_t v = 0; v < graph.num_nodes; v++) {
+            if (graph.str[v] == -1) continue; // No edges for this vertex
             
-            // Skip self-loops and duplicates
-            if (neighbor != i && neighbor != last) {
-                count++;
-                last = neighbor;
+            // Get all neighbors for this vertex
+            std::vector<uint32_t> neighbors;
+            for (uint32_t i = 0; i < graph.nei[v]; i++) {
+                uint32_t edge_idx = graph.str[v] + i;
+                uint32_t neighbor = graph.dst[edge_idx];
+                
+                // Skip self-loops
+                if (neighbor != v) {
+                    neighbors.push_back(neighbor);
+                }
+            }
+            
+            // Sort and remove duplicates
+            std::sort(neighbors.begin(), neighbors.end());
+            neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
+            
+            // Add unique edges (but only if v < neighbor to avoid duplicating undirected edges)
+            for (uint32_t neighbor : neighbors) {
+                if (v < neighbor) {
+                    local_src.push_back(v);
+                    local_dst.push_back(neighbor);
+                    local_src.push_back(neighbor);
+                    local_dst.push_back(v);
+                    local_edges++;
+                }
             }
         }
         
-        unique_counts[i] = count;
-    }
-    
-    // Compute new row pointers based on unique counts
-    std::vector<uint32_t> new_row_ptr(graph.num_nodes + 1);
-    new_row_ptr[0] = 0;
-    
-    for (size_t i = 0; i < graph.num_nodes; i++) {
-        new_row_ptr[i + 1] = new_row_ptr[i] + unique_counts[i];
-    }
-    
-    // Allocate new column indices
-    std::vector<uint32_t> new_col_idx(new_row_ptr.back());
-    
-    // Fill new column indices
-    #pragma omp parallel for num_threads(num_threads)
-    for (size_t i = 0; i < graph.num_nodes; i++) {
-        uint32_t start = graph.row_ptr[i];
-        uint32_t end = graph.row_ptr[i + 1];
-        uint32_t new_start = new_row_ptr[i];
-        
-        if (start == end) continue; // No edges
-        
-        uint32_t last = UINT32_MAX; // Initialize to an impossible node ID
-        uint32_t pos = new_start;
-        
-        for (uint32_t j = start; j < end; j++) {
-            uint32_t neighbor = graph.col_idx[j];
-            
-            // Skip self-loops and duplicates
-            if (neighbor != i && neighbor != last) {
-                new_col_idx[pos++] = neighbor;
-                last = neighbor;
-            }
+        // Merge results
+        #pragma omp critical
+        {
+            new_src.insert(new_src.end(), local_src.begin(), local_src.end());
+            new_dst.insert(new_dst.end(), local_dst.begin(), local_dst.end());
+            new_edges += local_edges;
         }
     }
-    
-    size_t removed_edges = (graph.col_idx.size() - new_col_idx.size()) / 2;
     
     // Update the graph
-    graph.col_idx = std::move(new_col_idx);
-    graph.row_ptr = std::move(new_row_ptr);
+    graph.src = std::move(new_src);
+    graph.dst = std::move(new_dst);
+    graph.num_edges = new_edges;
+    
+    // Rebuild the index
+    graph.build_index(num_threads, verbose);
     
     if (verbose) {
-        std::cout << "Removed " << removed_edges << " edges (self-loops and duplicates)" << std::endl;
+        std::cout << "Clean graph has " << graph.num_edges << " undirected edges" << std::endl;
     }
 }
 
 // Simple test function to validate the graph
-void test_graph(const CSRGraph& graph) {
+void test_graph(const DIGraph& graph) {
     std::cout << "Testing graph integrity..." << std::endl;
     
     size_t total_edges = 0;
     for (size_t i = 0; i < graph.num_nodes; i++) {
-        total_edges += graph.row_ptr[i + 1] - graph.row_ptr[i];
+        total_edges += graph.nei[i];
     }
     
-    std::cout << "Total edges in CSR: " << total_edges << std::endl;
+    std::cout << "Total edges in DI graph: " << total_edges << std::endl;
     
     // Check if all edges are valid
     bool valid = true;
@@ -170,8 +234,11 @@ void test_graph(const CSRGraph& graph) {
     size_t total_to_check = std::min(size_t(1000), graph.num_nodes); // Limit check to 1000 nodes for performance
     
     for (size_t i = 0; i < total_to_check; i++) {
-        for (size_t j = graph.row_ptr[i]; j < graph.row_ptr[i + 1]; j++) {
-            uint32_t neighbor = graph.col_idx[j];
+        if (graph.str[i] == -1) continue; // No edges for this vertex
+        
+        for (uint32_t j = 0; j < graph.nei[i]; j++) {
+            uint32_t edge_idx = graph.str[i] + j;
+            uint32_t neighbor = graph.dst[edge_idx];
             checked_edges++;
             
             if (neighbor >= graph.num_nodes) {
@@ -182,10 +249,13 @@ void test_graph(const CSRGraph& graph) {
             
             // Check if the reverse edge exists
             bool found = false;
-            for (size_t k = graph.row_ptr[neighbor]; k < graph.row_ptr[neighbor + 1]; k++) {
-                if (graph.col_idx[k] == i) {
-                    found = true;
-                    break;
+            if (graph.str[neighbor] != -1) {
+                for (uint32_t k = 0; k < graph.nei[neighbor]; k++) {
+                    uint32_t rev_edge_idx = graph.str[neighbor] + k;
+                    if (graph.dst[rev_edge_idx] == i) {
+                        found = true;
+                        break;
+                    }
                 }
             }
             
@@ -201,6 +271,35 @@ void test_graph(const CSRGraph& graph) {
     
     if (valid) {
         std::cout << "Graph appears valid (checked " << checked_edges << " edges)" << std::endl;
+    }
+}
+
+// Utility function to print graph statistics
+void print_graph_stats(const DIGraph& graph) {
+    std::cout << "Graph Statistics:" << std::endl;
+    std::cout << "Nodes: " << graph.num_nodes << std::endl;
+    std::cout << "Edges: " << graph.num_edges << " (undirected)" << std::endl;
+    
+    // Calculate degree statistics
+    if (graph.num_nodes > 0) {
+        uint32_t max_degree = 0;
+        uint32_t min_degree = UINT32_MAX;
+        double avg_degree = 0.0;
+        
+        for (size_t i = 0; i < graph.num_nodes; i++) {
+            uint32_t degree = graph.nei[i];
+            max_degree = std::max(max_degree, degree);
+            if (degree > 0) {
+                min_degree = std::min(min_degree, degree);
+            }
+            avg_degree += degree;
+        }
+        
+        avg_degree /= graph.num_nodes;
+        
+        std::cout << "Max degree: " << max_degree << std::endl;
+        std::cout << "Min degree (non-zero): " << (min_degree == UINT32_MAX ? 0 : min_degree) << std::endl;
+        std::cout << "Avg degree: " << avg_degree << std::endl;
     }
 }
 

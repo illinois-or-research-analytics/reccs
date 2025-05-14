@@ -15,9 +15,9 @@ public:
     // 1. Nodes that are part of non-singleton clusters and their internal edges
     // 2. The complement graph containing all edges not in the clustered subgraph (excluding isolated nodes)
     // Returns: (clustered_graph, complement_graph, clustered_node_map, complement_node_map)
-    static std::tuple<CSRGraph, CSRGraph, std::unordered_map<uint32_t, uint32_t>, std::unordered_map<uint32_t, uint32_t>> 
+    static std::tuple<DIGraph, DIGraph, std::unordered_map<uint32_t, uint32_t>, std::unordered_map<uint32_t, uint32_t>> 
     split_by_clustering(
-        const CSRGraph& original_graph, 
+        const DIGraph& original_graph, 
         const Clustering& clustering,
         bool verbose = false) {
         
@@ -66,14 +66,14 @@ public:
 
 private:
     // Split graph in a single pass and return both subgraphs and their node mappings
-    static std::tuple<CSRGraph, CSRGraph, std::unordered_map<uint32_t, uint32_t>, std::unordered_map<uint32_t, uint32_t>> 
+    static std::tuple<DIGraph, DIGraph, std::unordered_map<uint32_t, uint32_t>, std::unordered_map<uint32_t, uint32_t>> 
     split_graph_single_pass(
-        const CSRGraph& original_graph,
+        const DIGraph& original_graph,
         const std::unordered_set<uint32_t>& clustered_nodes,
         bool verbose) {
         
         // Create the clustered subgraph
-        CSRGraph clustered_graph;
+        DIGraph clustered_graph;
         
         // Create mapping from original node IDs to new node IDs for clustered subgraph
         std::unordered_map<uint32_t, uint32_t> clustered_node_map;
@@ -86,33 +86,35 @@ private:
         // Track nodes that have edges in the complement graph
         std::unordered_set<uint32_t> complement_nodes_with_edges;
         
-        // First pass: count edges for both subgraphs
-        std::vector<uint32_t> clustered_degree(clustered_nodes.size(), 0);
-        std::vector<uint32_t> complement_degree_temp;
-        complement_degree_temp.resize(original_graph.num_nodes, 0);
+        // Initialize the subgraphs
+        clustered_graph.init(clustered_nodes.size());
+        clustered_graph.num_nodes = clustered_nodes.size();
+        clustered_graph.num_edges = 0;
         
-        size_t clustered_edge_count = 0;
-        size_t complement_edge_count = 0;
+        // First pass: identify edges for both subgraphs
+        std::vector<std::pair<uint32_t, uint32_t>> clustered_edges;
+        std::vector<std::pair<uint32_t, uint32_t>> complement_edges;
         
-        for (uint32_t node_id = 0; node_id < original_graph.num_nodes; ++node_id) {
-            // Get original node edges
-            for (uint32_t i = original_graph.row_ptr[node_id]; 
-                 i < original_graph.row_ptr[node_id + 1]; ++i) {
-                uint32_t neighbor = original_graph.col_idx[i];
-                
-                // Check if both endpoints are in clustered nodes
-                bool node_in_cluster = (clustered_nodes.find(node_id) != clustered_nodes.end());
-                bool neighbor_in_cluster = (clustered_nodes.find(neighbor) != clustered_nodes.end());
-                
-                if (node_in_cluster && neighbor_in_cluster) {
-                    // This edge belongs to the clustered subgraph
+        // Process each edge in the original graph
+        for (uint32_t i = 0; i < original_graph.src.size(); i++) {
+            uint32_t node_id = original_graph.src[i];
+            uint32_t neighbor = original_graph.dst[i];
+            
+            // Check if both endpoints are in clustered nodes
+            bool node_in_cluster = (clustered_nodes.find(node_id) != clustered_nodes.end());
+            bool neighbor_in_cluster = (clustered_nodes.find(neighbor) != clustered_nodes.end());
+            
+            if (node_in_cluster && neighbor_in_cluster) {
+                // This edge belongs to the clustered subgraph
+                if (node_id < neighbor) { // Count each undirected edge only once
                     uint32_t new_node_id = clustered_node_map[node_id];
-                    clustered_degree[new_node_id]++;
-                    clustered_edge_count++;
-                } else {
-                    // This edge belongs to the complement subgraph
-                    complement_degree_temp[node_id]++;
-                    complement_edge_count++;
+                    uint32_t new_neighbor_id = clustered_node_map[neighbor];
+                    clustered_edges.emplace_back(new_node_id, new_neighbor_id);
+                }
+            } else {
+                // This edge belongs to the complement subgraph
+                if (node_id < neighbor) { // Count each undirected edge only once
+                    complement_edges.emplace_back(node_id, neighbor);
                     
                     // Track nodes that will have edges in the complement graph
                     complement_nodes_with_edges.insert(node_id);
@@ -120,16 +122,6 @@ private:
                 }
             }
         }
-        
-        // Set final edge counts (divide by 2 because we counted each edge twice in undirected graph)
-        clustered_graph.num_edges = clustered_edge_count / 2;
-        
-        if (verbose) {
-            std::cout << "Complement nodes with edges: " << complement_nodes_with_edges.size() << std::endl;
-        }
-        
-        // Create the complement graph
-        CSRGraph complement_graph;
         
         // Create mapping for complement graph nodes
         std::unordered_map<uint32_t, uint32_t> complement_node_map;
@@ -142,78 +134,38 @@ private:
             complement_idx++;
         }
         
-        // Prepare the clustered graph
-        clustered_graph.num_nodes = clustered_nodes.size();
-        clustered_graph.row_ptr.resize(clustered_graph.num_nodes + 1, 0);
-        
-        // Compute row pointers for clustered graph
-        for (uint32_t i = 0; i < clustered_graph.num_nodes; ++i) {
-            clustered_graph.row_ptr[i + 1] = clustered_graph.row_ptr[i] + clustered_degree[i];
-        }
-        
-        // Prepare the complement graph
+        // Create and initialize the complement graph
+        DIGraph complement_graph;
+        complement_graph.init(complement_nodes_with_edges.size());
         complement_graph.num_nodes = complement_nodes_with_edges.size();
-        complement_graph.num_edges = complement_edge_count / 2;
-        complement_graph.row_ptr.resize(complement_graph.num_nodes + 1, 0);
+        complement_graph.num_edges = 0;
         
-        // Create properly sized degree array for complement graph
-        std::vector<uint32_t> complement_degree(complement_graph.num_nodes, 0);
-        
-        // Update the complement degree array with the proper indices
-        for (uint32_t new_idx = 0; new_idx < complement_graph.num_nodes; ++new_idx) {
-            uint32_t orig_node_id = complement_reverse_map[new_idx];
-            complement_degree[new_idx] = complement_degree_temp[orig_node_id];
+        // Add edges to the clustered graph
+        for (const auto& [src, dst] : clustered_edges) {
+            // Add in both directions (for undirected graph)
+            clustered_graph.src.push_back(src);
+            clustered_graph.dst.push_back(dst);
+            clustered_graph.src.push_back(dst);
+            clustered_graph.dst.push_back(src);
+            clustered_graph.num_edges++; // Count as one undirected edge
         }
         
-        // Compute row pointers for complement graph
-        for (uint32_t i = 0; i < complement_graph.num_nodes; ++i) {
-            complement_graph.row_ptr[i + 1] = complement_graph.row_ptr[i] + complement_degree[i];
+        // Add edges to the complement graph
+        for (const auto& [orig_src, orig_dst] : complement_edges) {
+            uint32_t new_src = complement_node_map[orig_src];
+            uint32_t new_dst = complement_node_map[orig_dst];
+            
+            // Add in both directions (for undirected graph)
+            complement_graph.src.push_back(new_src);
+            complement_graph.dst.push_back(new_dst);
+            complement_graph.src.push_back(new_dst);
+            complement_graph.dst.push_back(new_src);
+            complement_graph.num_edges++; // Count as one undirected edge
         }
         
-        // Reset degree arrays for filling column indices
-        std::fill(clustered_degree.begin(), clustered_degree.end(), 0);
-        std::fill(complement_degree.begin(), complement_degree.end(), 0);
-        
-        // Allocate column indices
-        clustered_graph.col_idx.resize(clustered_graph.row_ptr.back());
-        complement_graph.col_idx.resize(complement_graph.row_ptr.back());
-        
-        // Second pass: fill column indices for both subgraphs
-        for (uint32_t node_id = 0; node_id < original_graph.num_nodes; ++node_id) {
-            // Get original node edges
-            for (uint32_t i = original_graph.row_ptr[node_id]; 
-                 i < original_graph.row_ptr[node_id + 1]; ++i) {
-                uint32_t neighbor = original_graph.col_idx[i];
-                
-                // Check if both endpoints are in clustered nodes
-                bool node_in_cluster = (clustered_nodes.find(node_id) != clustered_nodes.end());
-                bool neighbor_in_cluster = (clustered_nodes.find(neighbor) != clustered_nodes.end());
-                
-                if (node_in_cluster && neighbor_in_cluster) {
-                    // This edge belongs to the clustered subgraph
-                    uint32_t new_node_id = clustered_node_map[node_id];
-                    uint32_t new_neighbor_id = clustered_node_map[neighbor];
-                    
-                    uint32_t pos = clustered_graph.row_ptr[new_node_id] + clustered_degree[new_node_id];
-                    clustered_graph.col_idx[pos] = new_neighbor_id;
-                    clustered_degree[new_node_id]++;
-                } else {
-                    // This edge belongs to the complement subgraph
-                    auto it_node = complement_node_map.find(node_id);
-                    auto it_neighbor = complement_node_map.find(neighbor);
-                    
-                    // Both nodes should be in the map since we added them earlier
-                    if (it_node != complement_node_map.end() && it_neighbor != complement_node_map.end()) {
-                        uint32_t new_node_id = it_node->second;
-                        uint32_t new_neighbor_id = it_neighbor->second;
-                        
-                        uint32_t pos = complement_graph.row_ptr[new_node_id] + complement_degree[new_node_id];
-                        complement_graph.col_idx[pos] = new_neighbor_id;
-                        complement_degree[new_node_id]++;
-                    }
-                }
-            }
-        }
+        // Build indices for both graphs
+        clustered_graph.build_index();
+        complement_graph.build_index();
         
         // Build the ID maps for clustered graph
         clustered_graph.id_map.resize(clustered_graph.num_nodes);

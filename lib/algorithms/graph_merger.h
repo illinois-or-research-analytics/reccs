@@ -9,18 +9,29 @@
 #include <filesystem>
 #include "../data_structures/graph.h"
 
+// Helper struct for hashing std::pair
+struct pair_hash {
+    template <class T1, class T2>
+    std::size_t operator () (const std::pair<T1, T2> &p) const {
+        auto h1 = std::hash<T1>{}(p.first);
+        auto h2 = std::hash<T2>{}(p.second);
+        return h1 ^ (h2 << 1);
+    }
+};
+
+
 class GraphMerger {
 public:
-    // Append a CSRGraph to an existing edge list file
+    // Append a DIGraph to an existing edge list file
     static bool append_graph_to_file(
-        const CSRGraph& graph,
+        const DIGraph& graph,
         const std::string& existing_file,
         const std::string& output_file,
         bool verbose = false) {
         
         if (verbose) {
             std::cout << "Appending graph to existing edge list..." << std::endl;
-            std::cout << "Graph to append: " << graph.num_nodes << " nodes, " 
+            std::cout << "Graph to append: " << graph.num_nodes << " nodes, "
                       << graph.num_edges << " edges" << std::endl;
             std::cout << "Existing file: " << existing_file << std::endl;
             std::cout << "Output file: " << output_file << std::endl;
@@ -56,23 +67,35 @@ public:
         // Count the edges we're appending
         size_t edges_appended = 0;
         
-        // For each node in the graph
-        for (uint32_t node_id = 0; node_id < graph.num_nodes; ++node_id) {
-            uint64_t original_node_id = graph.id_map[node_id];
+        // Use a set to track edges we've already processed to avoid duplicates
+        std::unordered_set<std::pair<uint32_t, uint32_t>, 
+            pair_hash> processed_edges;
+        
+        // For each edge in the graph
+        for (size_t i = 0; i < graph.src.size(); i++) {
+            uint32_t node_id = graph.src[i];
+            uint32_t neighbor_id = graph.dst[i];
             
-            // For each neighbor of this node
-            for (uint32_t i = graph.row_ptr[node_id]; i < graph.row_ptr[node_id + 1]; ++i) {
-                uint32_t neighbor_id = graph.col_idx[i];
-                
-                // Only process each edge once (where source < target)
-                if (node_id < neighbor_id) {
-                    uint64_t original_neighbor_id = graph.id_map[neighbor_id];
-                    
-                    // Write edge to file
-                    out << original_node_id << "\t" << original_neighbor_id << "\n";
-                    edges_appended++;
-                }
+            // Create an ordered pair to ensure we only process each edge once
+            uint32_t src = std::min(node_id, neighbor_id);
+            uint32_t dst = std::max(node_id, neighbor_id);
+            
+            // Check if we've already processed this edge
+            auto edge_pair = std::make_pair(src, dst);
+            if (processed_edges.find(edge_pair) != processed_edges.end()) {
+                continue;
             }
+            
+            // Mark as processed
+            processed_edges.insert(edge_pair);
+            
+            // Map to original IDs
+            uint64_t original_src_id = graph.id_map[src];
+            uint64_t original_dst_id = graph.id_map[dst];
+            
+            // Write edge to file
+            out << original_src_id << "\t" << original_dst_id << "\n";
+            edges_appended++;
         }
         
         out.close();
@@ -86,7 +109,7 @@ public:
     
     // Function that takes a modified clustered graph and appends it to an unclustered graph file
     static bool merge_clustered_to_unclustered(
-        const CSRGraph& clustered_graph,
+        const DIGraph& clustered_graph,
         const std::string& unclustered_file,
         const std::string& output_file,
         bool verbose = false) {
@@ -94,5 +117,4 @@ public:
         return append_graph_to_file(clustered_graph, unclustered_file, output_file, verbose);
     }
 };
-
 #endif // GRAPH_MERGER_H

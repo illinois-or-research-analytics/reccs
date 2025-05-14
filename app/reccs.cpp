@@ -13,7 +13,6 @@
 #include "../lib/algorithms/graph_splitter.h"
 #include "../lib/algorithms/graph_merger.h"
 #include "../lib/algorithms/sbm.h"
-#include "../lib/algorithms/degree_enforcer.h"
 
 namespace fs = std::filesystem;
 
@@ -89,7 +88,7 @@ int main(int argc, char** argv) {
     
     // Load the graph
     auto load_start_time = std::chrono::steady_clock::now();
-    CSRGraph graph = load_undirected_tsv_edgelist_parallel(graph_filename, num_threads, verbose);
+    DIGraph graph = load_undirected_tsv_edgelist_parallel(graph_filename, num_threads, verbose);
     auto load_end_time = std::chrono::steady_clock::now();
     
     // Clean the graph
@@ -209,69 +208,6 @@ int main(int argc, char** argv) {
             
         pid_t unclustered_pid = SBMGenerator::fork_generate_sbm(
             unclustered_graph, unclustered_clustering_file, unclustered_sbm_dir, "unclustered", verbose);
-            
-        if (clustered_pid < 0 || unclustered_pid < 0) {
-            std::cerr << "Error forking processes for SBM generation" << std::endl;
-        } else {
-            // Wait for both processes to complete and load the resulting graphs
-            if (verbose) {
-                std::cout << "Waiting for SBM generation processes to complete..." << std::endl;
-            }
-            
-            // Only load the clustered SBM into memory
-            CSRGraph clustered_sbm = SBMGenerator::wait_and_load_sbm(
-                clustered_pid, clustered_sbm_dir, num_threads, verbose);
-                
-            // For the unclustered SBM, just wait for it to complete
-            int status;
-            waitpid(unclustered_pid, &status, 0);
-            
-            if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-                if (verbose) {
-                    std::cout << "Unclustered SBM generation completed successfully" << std::endl;
-                }
-                
-                // Enforce minimum cluster degrees in the clustered SBM
-                if (verbose) {
-                    std::cout << "Enforcing minimum cluster degrees in clustered SBM..." << std::endl;
-                }
-
-                // Set a minimum degree floor of 1 - clusters will have at least this many internal connections
-                uint32_t min_degree_floor = 1;
-
-                // Create a modified version of the clustered SBM with enforced minimum degrees
-                CSRGraph modified_clustered_sbm = DegreeEnforcer::enforce_min_cluster_degrees(
-                    clustered_sbm, clustered_graph, clustering, clustered_node_map, min_degree_floor, verbose);
-
-                // Create paths
-                std::string clustered_sbm_filename = base_name + "_clustered_sbm.tsv";
-                std::string unclustered_sbm_filename = unclustered_sbm_dir + "/syn_sbm.tsv";
-                std::string merged_sbm_filename = base_name + "_merged_sbm.tsv";
-
-                // Save the modified clustered SBM
-                save_graph_edgelist(clustered_sbm_filename, modified_clustered_sbm, verbose);
-                
-                if (verbose) {
-                    std::cout << "Saved clustered SBM to: " << clustered_sbm_filename << std::endl;
-                }
-                
-                // Create the merged SBM by appending the clustered SBM to the unclustered SBM
-                if (verbose) {
-                    std::cout << "Creating merged SBM by appending clustered SBM to unclustered SBM..." << std::endl;
-                }
-                
-                if (GraphMerger::merge_clustered_to_unclustered(
-                        clustered_sbm, unclustered_sbm_filename, merged_sbm_filename, verbose)) {
-                    if (verbose) {
-                        std::cout << "Successfully created merged SBM: " << merged_sbm_filename << std::endl;
-                    }
-                } else {
-                    std::cerr << "Failed to create merged SBM" << std::endl;
-                }
-            } else {
-                std::cerr << "Unclustered SBM generation failed" << std::endl;
-            }
-        }
         
         auto sbm_end_time = std::chrono::steady_clock::now();
         auto sbm_duration = std::chrono::duration_cast<std::chrono::milliseconds>(

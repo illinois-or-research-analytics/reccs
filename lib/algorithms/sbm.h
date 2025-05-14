@@ -17,8 +17,8 @@ namespace fs = std::filesystem;
 class SBMGenerator {
 public:
     // Generate an SBM from a graph and clustering, and return the resulting graph
-    static CSRGraph generate_sbm(
-        const CSRGraph& input_graph,
+    static DIGraph generate_sbm(
+        const DIGraph& input_graph,
         const std::string& clustering_filepath,
         const std::string& output_directory,
         const std::string& prefix,
@@ -53,7 +53,7 @@ public:
         
         if (ret != 0) {
             std::cerr << "Error running SBM generator script" << std::endl;
-            return CSRGraph(); // Return empty graph on error
+            return DIGraph(); // Return empty graph on error
         }
         
         if (verbose) {
@@ -71,7 +71,7 @@ public:
         }
         
         // Load the generated graph
-        CSRGraph sbm_graph = load_undirected_tsv_edgelist_parallel(
+        DIGraph sbm_graph = load_undirected_tsv_edgelist_parallel(
             output_graph_filename, num_threads, verbose);
         
         clean_graph_parallel(sbm_graph, num_threads, verbose);
@@ -86,7 +86,7 @@ public:
     
     // Fork a process to generate an SBM and return immediately
     static pid_t fork_generate_sbm(
-        const CSRGraph& input_graph,
+        const DIGraph& input_graph,
         const std::string& clustering_filepath,
         const std::string& output_directory,
         const std::string& prefix,
@@ -146,7 +146,7 @@ public:
     }
     
     // Wait for a forked SBM generation process to complete and load the resulting graph
-    static CSRGraph wait_and_load_sbm(
+    static DIGraph wait_and_load_sbm(
         pid_t pid,
         const std::string& output_directory,
         int num_threads = 1,
@@ -169,7 +169,7 @@ public:
             }
             
             // Load the generated graph
-            CSRGraph sbm_graph = load_undirected_tsv_edgelist_parallel(
+            DIGraph sbm_graph = load_undirected_tsv_edgelist_parallel(
                 output_graph_filename, num_threads, verbose);
             
             clean_graph_parallel(sbm_graph, num_threads, verbose);
@@ -183,7 +183,7 @@ public:
         } else {
             // Child process failed
             std::cerr << "SBM generation process " << pid << " failed" << std::endl;
-            return CSRGraph(); // Return empty graph on error
+            return DIGraph(); // Return empty graph on error
         }
     }
 };

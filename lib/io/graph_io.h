@@ -14,8 +14,8 @@
 #include "../data_structures/graph.h"
 #include "../data_structures/mapped_file.h"
 
-CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int num_threads = std::thread::hardware_concurrency(), bool verbose = false) {
-    CSRGraph graph;
+DIGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int num_threads = std::thread::hardware_concurrency(), bool verbose = false) {
+    DIGraph graph;
     MappedFile file;
     
     if (!file.open(filename)) {
@@ -150,135 +150,75 @@ CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int 
         graph.id_map[entry.second] = entry.first;
     }
     
-    // Calculate total edges (undirected)
+    // Initialize DI graph structure
+    graph.init(graph.num_nodes);
+    
+    if (verbose) {
+        std::cout << "Found " << graph.num_nodes << " nodes." << std::endl;
+        std::cout << "Step 3: Building DI graph structure..." << std::endl;
+    }
+    
+    // Count total edges
+    size_t total_edges = 0;
     for (const auto& local_edge_list : local_edges) {
-        graph.num_edges += local_edge_list.size();
+        total_edges += local_edge_list.size();
     }
     
-    if (verbose) {
-        std::cout << "Found " << graph.num_nodes << " nodes and " 
-                  << graph.num_edges << " undirected edges." << std::endl;
-        std::cout << "Step 3: Counting node degrees..." << std::endl;
-    }
+    // Pre-allocate memory for edge arrays (2x for undirected)
+    graph.src.reserve(total_edges * 2);
+    graph.dst.reserve(total_edges * 2);
     
-    // Use atomic vector for thread-safe degree counting
-    std::vector<std::atomic<uint32_t>> degree(graph.num_nodes);
-    for (auto& d : degree) {
-        d.store(0, std::memory_order_relaxed);
-    }
+    // Fill edge arrays
+    size_t edges_processed = 0;
     
-    // Launch threads to count degrees
-    threads.clear();
-    
-    auto count_degrees = [&](int thread_id) {
+    for (int thread_id = 0; thread_id < num_threads; thread_id++) {
         for (const auto& edge : local_edges[thread_id]) {
             uint32_t src_id = node_map[edge.first];
             uint32_t dst_id = node_map[edge.second];
             
-            // Increment degree for both source and destination (undirected graph)
-            degree[src_id].fetch_add(1, std::memory_order_relaxed);
-            degree[dst_id].fetch_add(1, std::memory_order_relaxed);
-        }
-    };
-    
-    for (int i = 0; i < num_threads; i++) {
-        threads.emplace_back(count_degrees, i);
-    }
-    
-    for (auto& t : threads) {
-        t.join();
-    }
-    
-    if (verbose) {
-        std::cout << "Step 4: Building row pointers..." << std::endl;
-    }
-    
-    // Build row pointers (prefix sum)
-    graph.row_ptr.resize(graph.num_nodes + 1);
-    graph.row_ptr[0] = 0;
-    
-    for (size_t i = 0; i < graph.num_nodes; i++) {
-        graph.row_ptr[i + 1] = graph.row_ptr[i] + degree[i].load(std::memory_order_relaxed);
-    }
-    
-    if (verbose) {
-        std::cout << "Step 5: Building CSR structure in parallel..." << std::endl;
-    }
-    
-    // Prepare for parallel CSR building
-    
-    // Allocate column indices vector
-    size_t total_directed_edges = graph.row_ptr.back();
-    graph.col_idx.resize(total_directed_edges);
-    
-    // Use atomic offsets for thread-safe insertion
-    std::vector<std::atomic<uint32_t>> offsets(graph.num_nodes);
-    for (size_t i = 0; i < graph.num_nodes; i++) {
-        offsets[i].store(0, std::memory_order_relaxed);
-    }
-    
-    // Launch threads to fill CSR
-    threads.clear();
-    std::atomic<size_t> edges_processed(0);
-    
-    auto fill_csr = [&](int thread_id) {
-        size_t local_edges_count = local_edges[thread_id].size();
-        size_t local_processed = 0;
-        
-        for (const auto& edge : local_edges[thread_id]) {
-            uint32_t src_id = node_map[edge.first];
-            uint32_t dst_id = node_map[edge.second];
+            // Add edge in both directions (undirected graph)
+            graph.src.push_back(src_id);
+            graph.dst.push_back(dst_id);
+            graph.src.push_back(dst_id);
+            graph.dst.push_back(src_id);
             
-            // Add edge src -> dst
-            uint32_t pos1 = graph.row_ptr[src_id] + offsets[src_id].fetch_add(1, std::memory_order_relaxed);
-            graph.col_idx[pos1] = dst_id;
+            edges_processed++;
             
-            // Add edge dst -> src (undirected)
-            uint32_t pos2 = graph.row_ptr[dst_id] + offsets[dst_id].fetch_add(1, std::memory_order_relaxed);
-            graph.col_idx[pos2] = src_id;
-            
-            local_processed++;
-            
-            // Update progress
-            if (verbose && thread_id == 0 && local_processed % 1000000 == 0) {
-                size_t total_processed = edges_processed.fetch_add(1000000);
-                double progress = static_cast<double>(total_processed) / graph.num_edges * 100.0;
-                std::cout << "\rCSR building progress: " << std::fixed << std::setprecision(1) 
+            if (verbose && edges_processed % 1000000 == 0) {
+                double progress = static_cast<double>(edges_processed) / total_edges * 100.0;
+                std::cout << "\rBuilding graph progress: " << std::fixed << std::setprecision(1) 
                           << progress << "%" << std::flush;
             }
         }
-        
-        // Account for any remaining edges
-        if (local_processed % 1000000 != 0) {
-            edges_processed.fetch_add(local_processed % 1000000);
-        }
-    };
-    
-    for (int i = 0; i < num_threads; i++) {
-        threads.emplace_back(fill_csr, i);
-    }
-    
-    for (auto& t : threads) {
-        t.join();
     }
     
     if (verbose) {
         std::cout << std::endl; // End the progress line
     }
     
+    // Update edge count (counting undirected edges)
+    graph.num_edges = total_edges;
+    
     // Free memory from edge lists
     local_edges.clear();
     
     if (verbose) {
+        std::cout << "Building DI graph index..." << std::endl;
+    }
+    
+    // Build the vertex index
+    graph.build_index(num_threads, verbose);
+    
+    if (verbose) {
         std::cout << "Loaded undirected graph with " << graph.num_nodes << " nodes and " 
-                  << graph.num_edges << " edges (" << total_directed_edges << " directed edges in CSR)" << std::endl;
+                  << graph.num_edges << " edges (" << graph.src.size() << " directed edges in DI structure)" << std::endl;
     }
     
     return graph;
 }
 
 // Save graph to a TSV edgelist file
-bool save_graph_edgelist(const std::string& filename, const CSRGraph& graph, bool verbose = false) {
+bool save_graph_edgelist(const std::string& filename, const DIGraph& graph, bool verbose = false) {
     std::ofstream outfile(filename);
     if (!outfile.is_open()) {
         std::cerr << "Failed to open output file: " << filename << std::endl;
@@ -293,16 +233,25 @@ bool save_graph_edgelist(const std::string& filename, const CSRGraph& graph, boo
     size_t total_edges = graph.num_edges;
     
     // For each node, write its edges (but only in one direction to avoid duplicates)
-    for (uint32_t node_id = 0; node_id < graph.num_nodes; ++node_id) {
-        uint64_t original_node_id = graph.id_map[node_id];
+    for (uint32_t src_id = 0; src_id < graph.num_nodes; ++src_id) {
+        // Skip if node has no edges
+        if (graph.str[src_id] == -1 || graph.nei[src_id] == 0) {
+            continue;
+        }
         
-        for (uint32_t i = graph.row_ptr[node_id]; i < graph.row_ptr[node_id + 1]; ++i) {
-            uint32_t neighbor_id = graph.col_idx[i];
+        uint64_t original_src_id = graph.id_map[src_id];
+        
+        // Get the starting position in the edge arrays
+        uint32_t start_pos = graph.str[src_id];
+        
+        // Write out each edge (but only if src < dst to avoid duplicates)
+        for (uint32_t i = 0; i < graph.nei[src_id]; ++i) {
+            uint32_t dst_id = graph.dst[start_pos + i];
             
-            // Only write edges where node_id < neighbor_id to avoid duplicates
-            if (node_id < neighbor_id) {
-                uint64_t original_neighbor_id = graph.id_map[neighbor_id];
-                outfile << original_node_id << "\t" << original_neighbor_id << "\n";
+            // Only write edges where src_id < dst_id to avoid duplicates
+            if (src_id < dst_id) {
+                uint64_t original_dst_id = graph.id_map[dst_id];
+                outfile << original_src_id << "\t" << original_dst_id << "\n";
                 
                 edges_written++;
                 if (verbose && edges_written % 1000000 == 0) {
@@ -322,5 +271,6 @@ bool save_graph_edgelist(const std::string& filename, const CSRGraph& graph, boo
     outfile.close();
     return true;
 }
+
 
 #endif // GRAPH_IO_H
