@@ -11,8 +11,8 @@
 #SBATCH --cpus-per-task=32			## number of CPUs per task
 #SBATCH --mem=128GB				## memory per node
 #SBATCH --partition=secondary			## queue
-#SBATCH --output=csr_runtime_test_oc.out		## file that will receive output from execution
-#SBATCH --error=csr_runtime_test_oc.err		## file that will receive any error messages
+#SBATCH --output=di_runtime_test_cen2.out		## file that will receive output from execution
+#SBATCH --error=di_runtime_test_cen2.err		## file that will receive any error messages
 #SBATCH --job-name=csr_runtime_test		## job name
 #SBATCH --mail-user=vikramr2@illinois.edu
 #SBATCH --mail-type=BEGIN,END
