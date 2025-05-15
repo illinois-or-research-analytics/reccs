@@ -72,7 +72,6 @@ int main(int argc, char** argv) {
     
     // Create and run the orchestrator
     auto start_time = std::chrono::high_resolution_clock::now();
-    
     Orchestrator orchestrator(graph_filename, cluster_filename, temp_dir, verbose);
     int result = orchestrator.run();
     
