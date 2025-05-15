@@ -1,4 +1,3 @@
-// lib/utils/orchestrator.h
 #pragma once
 
 #include <string>
@@ -9,7 +8,7 @@
 #include <unistd.h>
 #include <vector>
 #include <fcntl.h>
-
+#include <algorithm>  // for std::find
 
 /**
  * @class Orchestrator
@@ -33,6 +32,10 @@ public:
         if (!std::filesystem::exists(temp_dir_)) {
             std::filesystem::create_directories(temp_dir_);
         }
+        
+        // Also ensure the SBM output directories exist
+        std::filesystem::create_directories(temp_dir_ + "/clustered_sbm");
+        std::filesystem::create_directories(temp_dir_ + "/unclustered_sbm");
     }
 
     /**
@@ -44,7 +47,7 @@ public:
         auto start_time = std::chrono::high_resolution_clock::now();
         
         if (verbose_) {
-            std::cout << "Starting RECCS workflow with optimized parallelization" << std::endl;
+            std::cout << "Starting RECCS workflow" << std::endl;
             std::cout << "Input graph: " << graph_filename_ << std::endl;
             std::cout << "Input clustering: " << cluster_filename_ << std::endl;
             std::cout << "Temporary directory: " << temp_dir_ << std::endl;
@@ -108,49 +111,136 @@ private:
     std::string unclustered_edges_;
     std::string unclustered_clusters_;
     
-    // Track process IDs
-    std::vector<pid_t> pids_;
+    // Track process IDs and their descriptions for better error reporting
+    std::vector<std::pair<pid_t, std::string>> pids_;
+    
+    // Track process output pipes
+    struct ProcessOutputPipes {
+        pid_t pid;
+        std::string description;
+        int stdout_fd;
+        int stderr_fd;
+    };
+    std::vector<ProcessOutputPipes> output_pipes_;
 
     /**
-     * @brief Execute a command in a child process with proper stream handling
+     * @brief Execute a command in a child process with proper stream handling and output capture
      * 
      * @param command The command to execute
      * @param description Description for verbose output
      * @return pid_t Process ID of the child, or -1 on error
      */
     pid_t executeCommand(const std::string& command, const std::string& description) {
+        if (verbose_) {
+            std::cout << "[" << description << "] Executing: " << command << std::endl;
+        }
+        
+        // Create pipes for capturing stdout/stderr
+        int stdout_pipe[2];
+        int stderr_pipe[2];
+        
+        if (pipe(stdout_pipe) < 0 || pipe(stderr_pipe) < 0) {
+            std::cerr << "Error: Failed to create pipes for " << description << std::endl;
+            return -1;
+        }
+        
         pid_t pid = fork();
         
         if (pid == 0) {
             // Child process
             
+            // Close read ends of pipes in child
+            close(stdout_pipe[0]);
+            close(stderr_pipe[0]);
+            
+            // Redirect stdout/stderr to pipes
+            dup2(stdout_pipe[1], STDOUT_FILENO);
+            dup2(stderr_pipe[1], STDERR_FILENO);
+            
+            // Close the write ends of pipes after duplication
+            close(stdout_pipe[1]);
+            close(stderr_pipe[1]);
+            
             // Close stdin to prevent the child from blocking on input
             close(STDIN_FILENO);
-            
-            // Redirect stdout/stderr to /dev/null if not verbose
-            if (!verbose_) {
-                int dev_null = open("/dev/null", O_WRONLY);
-                dup2(dev_null, STDOUT_FILENO);
-                dup2(dev_null, STDERR_FILENO);
-                close(dev_null);
-            }
-            
-            if (verbose_) {
-                std::cout << "[" << description << "] Executing: " << command << std::endl;
-            }
             
             // Execute the command
             int status = system(command.c_str());
             
             // Use _exit instead of exit to avoid flushing stdio buffers
             _exit(WEXITSTATUS(status));
-        }
-        
-        if (pid > 0 && verbose_) {
-            std::cout << "[" << description << "] Started with PID: " << pid << std::endl;
+        } else if (pid > 0) {
+            // Parent process
+            
+            // Close write ends of pipes in parent
+            close(stdout_pipe[1]);
+            close(stderr_pipe[1]);
+            
+            // Store pipes for later reading
+            std::string process_log_dir = temp_dir_ + "/logs";
+            std::filesystem::create_directories(process_log_dir);
+            
+            // Store PID, description and pipe file descriptors for later processing
+            output_pipes_.push_back({pid, description, stdout_pipe[0], stderr_pipe[0]});
+            
+            if (verbose_) {
+                std::cout << "[" << description << "] Started with PID: " << pid << std::endl;
+            }
+        } else {
+            // Fork failed
+            close(stdout_pipe[0]);
+            close(stdout_pipe[1]);
+            close(stderr_pipe[0]);
+            close(stderr_pipe[1]);
         }
         
         return pid;
+    }
+    
+    /**
+     * @brief Process and save the output from a command
+     * 
+     * @param pid Process ID to process output for
+     * @param description Process description
+     * @param stdout_fd File descriptor for stdout
+     * @param stderr_fd File descriptor for stderr
+     */
+    void processCommandOutput(pid_t pid, const std::string& description, int stdout_fd, int stderr_fd) {
+        std::string process_log_dir = temp_dir_ + "/logs";
+        std::string stdout_log = process_log_dir + "/" + description + "." + std::to_string(pid) + ".stdout.log";
+        std::string stderr_log = process_log_dir + "/" + description + "." + std::to_string(pid) + ".stderr.log";
+        
+        // Read and save stdout
+        char buffer[4096];
+        ssize_t bytes_read;
+        int stdout_file = open(stdout_log.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        
+        if (stdout_file >= 0) {
+            while ((bytes_read = read(stdout_fd, buffer, sizeof(buffer))) > 0) {
+                write(stdout_file, buffer, bytes_read);
+                if (verbose_) {
+                    write(STDOUT_FILENO, buffer, bytes_read);
+                }
+            }
+            close(stdout_file);
+        }
+        
+        // Read and save stderr
+        int stderr_file = open(stderr_log.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        
+        if (stderr_file >= 0) {
+            while ((bytes_read = read(stderr_fd, buffer, sizeof(buffer))) > 0) {
+                write(stderr_file, buffer, bytes_read);
+                if (verbose_) {
+                    write(STDERR_FILENO, buffer, bytes_read);
+                }
+            }
+            close(stderr_file);
+        }
+        
+        // Close the pipe file descriptors
+        close(stdout_fd);
+        close(stderr_fd);
     }
 
     /**
@@ -189,9 +279,9 @@ private:
             return false;
         }
         
-        // Store both PIDs
-        pids_.push_back(splitter_pid);
-        pids_.push_back(stats_pid);
+        // Store both PIDs with descriptions
+        pids_.push_back({splitter_pid, "Splitter"});
+        pids_.push_back({stats_pid, "Stats"});
         
         // Wait for the splitter process to complete (we need its output for the next stage)
         int splitter_status;
@@ -203,7 +293,8 @@ private:
         }
         
         // Remove splitter PID from the pending list as we already waited for it
-        auto it = std::find(pids_.begin(), pids_.end(), splitter_pid);
+        auto it = std::find_if(pids_.begin(), pids_.end(), 
+                             [splitter_pid](const auto& pair) { return pair.first == splitter_pid; });
         if (it != pids_.end()) {
             pids_.erase(it);
         }
@@ -214,12 +305,12 @@ private:
         unclustered_edges_ = temp_dir_ + "/singleton_edges.tsv";
         unclustered_clusters_ = temp_dir_ + "/singleton_clusters.tsv";
         
-        // Check if output files exist
-        if (!std::filesystem::exists(clustered_edges_) || 
-            !std::filesystem::exists(clustered_clusters_) || 
-            !std::filesystem::exists(unclustered_edges_) || 
-            !std::filesystem::exists(unclustered_clusters_)) {
-            std::cerr << "Error: Expected output files from splitter not found" << std::endl;
+        // Check if output files exist and are not empty
+        if (!checkFileExistsAndNotEmpty(clustered_edges_) || 
+            !checkFileExistsAndNotEmpty(clustered_clusters_) || 
+            !checkFileExistsAndNotEmpty(unclustered_edges_) || 
+            !checkFileExistsAndNotEmpty(unclustered_clusters_)) {
+            std::cerr << "Error: Expected output files from splitter not found or empty" << std::endl;
             return false;
         }
         
@@ -275,9 +366,9 @@ private:
             return false;
         }
         
-        // Store PIDs
-        pids_.push_back(clustered_sbm_pid);
-        pids_.push_back(unclustered_sbm_pid);
+        // Store PIDs with descriptions
+        pids_.push_back({clustered_sbm_pid, "SBM-Clustered"});
+        pids_.push_back({unclustered_sbm_pid, "SBM-Unclustered"});
         
         return true;
     }
@@ -293,25 +384,80 @@ private:
         }
         
         int status;
-        for (pid_t pid : pids_) {
+        bool all_success = true;
+        
+        for (const auto& [pid, description] : pids_) {
             if (verbose_) {
-                std::cout << "Waiting for process " << pid << "..." << std::endl;
+                std::cout << "Waiting for process " << pid << " (" << description << ")..." << std::endl;
             }
             
+            // Wait for the process to finish
             waitpid(pid, &status, 0);
             
-            if (WEXITSTATUS(status) != 0) {
-                std::cerr << "Error: Process " << pid << " failed with status " << WEXITSTATUS(status) << std::endl;
-                return false;
+            // Find and process any output pipes for this process
+            auto it = std::find_if(output_pipes_.begin(), output_pipes_.end(),
+                                [pid](const auto& pipes) { return pipes.pid == pid; });
+            
+            if (it != output_pipes_.end()) {
+                processCommandOutput(it->pid, it->description, it->stdout_fd, it->stderr_fd);
+                output_pipes_.erase(it);
             }
             
-            if (verbose_) {
-                std::cout << "Process " << pid << " completed successfully" << std::endl;
+            if (WEXITSTATUS(status) != 0) {
+                std::cerr << "Error: Process " << pid << " (" << description << ") failed with status " 
+                          << WEXITSTATUS(status) << std::endl;
+                all_success = false;
+                // Continue waiting for other processes even if one fails
+            } else {
+                if (verbose_) {
+                    std::cout << "Process " << pid << " (" << description << ") completed successfully" << std::endl;
+                }
+                
+                // For SBM processes, verify output files immediately
+                if (description == "SBM-Clustered") {
+                    std::string output_file = temp_dir_ + "/clustered_sbm/syn_sbm.tsv";
+                    if (!checkFileExistsAndNotEmpty(output_file)) {
+                        std::cerr << "Error: SBM-Clustered process completed but did not generate output file: " 
+                                  << output_file << std::endl;
+                        all_success = false;
+                    }
+                } else if (description == "SBM-Unclustered") {
+                    std::string output_file = temp_dir_ + "/unclustered_sbm/syn_sbm.tsv";
+                    if (!checkFileExistsAndNotEmpty(output_file)) {
+                        std::cerr << "Error: SBM-Unclustered process completed but did not generate output file: " 
+                                  << output_file << std::endl;
+                        all_success = false;
+                    }
+                }
             }
         }
         
         // Clear the PID list
         pids_.clear();
+        
+        return all_success;
+    }
+    
+    /**
+     * @brief Check if a file exists and is not empty
+     * 
+     * @param filepath Path to the file to check
+     * @return bool true if file exists and is not empty
+     */
+    bool checkFileExistsAndNotEmpty(const std::string& filepath) {
+        if (!std::filesystem::exists(filepath)) {
+            if (verbose_) {
+                std::cerr << "File does not exist: " << filepath << std::endl;
+            }
+            return false;
+        }
+        
+        if (std::filesystem::file_size(filepath) == 0) {
+            if (verbose_) {
+                std::cerr << "File is empty: " << filepath << std::endl;
+            }
+            return false;
+        }
         
         return true;
     }
@@ -328,19 +474,16 @@ private:
             temp_dir_ + "/unclustered_sbm/syn_sbm.tsv"
         };
         
+        bool all_files_exist = true;
+        
         for (const auto& file : required_files) {
-            if (!std::filesystem::exists(file)) {
-                std::cerr << "Error: Required output file not found: " << file << std::endl;
-                return false;
-            }
-            
-            // Check if file is empty
-            if (std::filesystem::file_size(file) == 0) {
-                std::cerr << "Error: Output file is empty: " << file << std::endl;
-                return false;
+            if (!checkFileExistsAndNotEmpty(file)) {
+                std::cerr << "Error: Required output file not found or empty: " << file << std::endl;
+                all_files_exist = false;
+                // Continue checking other files
             }
         }
         
-        return true;
+        return all_files_exist;
     }
 };

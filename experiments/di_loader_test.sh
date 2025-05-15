@@ -20,4 +20,5 @@
 ########## Run your executable ######################
 
 cd ../build
+cmake .. && make
 time ./reccs ../data/cen.tsv -v -c ../data/cen_0.01.tsv

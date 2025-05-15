@@ -22,6 +22,9 @@ public:
      * @return Graph The loaded graph
      */
     static Graph read_tsv(const std::string& filepath, bool verbose = false) {
+        // Get start time for performance measurement
+        auto start_time = std::chrono::high_resolution_clock::now();
+
         std::ifstream file(filepath);
         if (!file.is_open()) {
             std::cerr << "Error: Unable to open file " << filepath << std::endl;
@@ -112,6 +115,9 @@ public:
         
         if (verbose) {
             std::cout << "Graph loaded successfully." << std::endl;
+            auto end_time = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
+            std::cout << "Loading time: " << duration << " seconds" << std::endl;
             graph.print_stats();
         }
         
