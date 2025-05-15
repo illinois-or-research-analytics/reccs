@@ -322,15 +322,8 @@ private:
      * 
      * @return bool true if successful, false otherwise
      */
-    bool runSecondStage() {
-        // Determine CPU cores to use for each SBM process (limit to avoid resource contention)
-        int total_cores = sysconf(_SC_NPROCESSORS_ONLN);
-        int cores_per_job = std::max(1, total_cores / 2);  // Split available cores between the two jobs
-        
-        // Prepare commands - use the parallelized version if available
-        bool use_parallel = std::filesystem::exists("extlib/gen_SBM_parallel.py");
-        
-        std::string sbm_script = use_parallel ? "extlib/gen_SBM_parallel.py" : "extlib/gen_SBM.py";
+    bool runSecondStage() {        
+        std::string sbm_script = "extlib/gen_SBM.py";
         
         std::string sbm_clustered_command = "python3 " + sbm_script;
         sbm_clustered_command += " -f " + clustered_edges_;
@@ -341,16 +334,10 @@ private:
         sbm_unclustered_command += " -f " + unclustered_edges_;
         sbm_unclustered_command += " -c " + unclustered_clusters_;
         sbm_unclustered_command += " -o " + temp_dir_ + "/unclustered_sbm";
-        
-        // Add job control and verbose flags if using parallel version
-        if (use_parallel) {
-            sbm_clustered_command += " -j " + std::to_string(cores_per_job);
-            sbm_unclustered_command += " -j " + std::to_string(cores_per_job);
-            
-            if (verbose_) {
-                sbm_clustered_command += " -v";
-                sbm_unclustered_command += " -v";
-            }
+
+        if (verbose_) {
+            sbm_clustered_command += " -v";
+            sbm_unclustered_command += " -v";
         }
         
         // Execute commands in parallel

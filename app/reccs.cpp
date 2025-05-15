@@ -63,9 +63,13 @@ int main(int argc, char** argv) {
         std::cout << "Creating temporary directory for intermediate files..." << std::endl;
     }
     std::string temp_dir = "temp";
-    if (!fs::exists(temp_dir)) {
-        fs::create_directories(temp_dir);
+
+    // Remove existing temp directory if it exists
+    if (fs::exists(temp_dir)) {
+        fs::remove_all(temp_dir);
     }
+
+    fs::create_directories(temp_dir);
     
     // Set OpenMP threads
     omp_set_num_threads(num_threads);
