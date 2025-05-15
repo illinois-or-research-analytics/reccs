@@ -1,334 +1,326 @@
-#pragma once
+#ifndef GRAPH_IO_H
+#define GRAPH_IO_H
 
 #include <string>
-#include <fstream>
-#include <sstream>
 #include <vector>
-#include <unordered_set>
+#include <thread>
+#include <atomic>
 #include <iostream>
-#include <omp.h>
+#include <fstream>  
+#include <iomanip>
+#include <unordered_map>
+#include <utility>
+#include <chrono>
 #include "../data_structures/graph.h"
+#include "mapped_file.h"
 
-/**
- * @brief Utility class for reading and writing graph files
- */
-class GraphIO {
-public:
-    /**
-     * @brief Read a graph from a TSV edgelist file
-     * 
-     * @param filepath Path to the TSV file
-     * @param verbose Whether to print verbose information
-     * @return Graph The loaded graph
-     */
-    static Graph read_tsv(const std::string& filepath, bool verbose = false) {
-        // Get start time for performance measurement
-        auto start_time = std::chrono::high_resolution_clock::now();
-
-        std::ifstream file(filepath);
-        if (!file.is_open()) {
-            std::cerr << "Error: Unable to open file " << filepath << std::endl;
-            return Graph();
-        }
-        
-        if (verbose) {
-            std::cout << "Reading graph from " << filepath << std::endl;
-        }
-        
-        std::vector<int> src, dst;
-        std::string line;
-        
-        // First pass: count the number of lines
-        size_t line_count = 0;
-        while (std::getline(file, line)) {
-            if (line.empty() || line[0] == '#') continue;  // Skip empty lines and comments
-            line_count++;
-        }
-        
-        if (verbose) {
-            std::cout << "Found " << line_count << " edge records" << std::endl;
-        }
-        
-        // Resize vectors to hold all edges
-        src.reserve(line_count);
-        dst.reserve(line_count);
-        
-        // Reset file to beginning
-        file.clear();
-        file.seekg(0, std::ios::beg);
-        
-        // Read all edges and collect unique vertices
-        std::unordered_set<int> unique_vertices;
-        
-        while (std::getline(file, line)) {
-            if (line.empty() || line[0] == '#') continue;
-            
-            std::istringstream iss(line);
-            int source, target;
-            
-            if (iss >> source >> target) {
-                src.push_back(source);
-                dst.push_back(target);
-                
-                unique_vertices.insert(source);
-                unique_vertices.insert(target);
-            }
-        }
-        
-        file.close();
-        
-        // Create node mapping from original IDs to continuous indices
-        std::unordered_map<int, int> node_map;
-        std::vector<int> rev_map;
-        rev_map.reserve(unique_vertices.size());
-        
-        int idx = 0;
-        for (int vertex : unique_vertices) {
-            node_map[vertex] = idx;
-            rev_map.push_back(vertex);
-            idx++;
-        }
-        
-        // Create and build the graph with node mapping
-        size_t num_edges = src.size();
-        
-        if (verbose) {
-            std::cout << "Creating undirected graph with " << unique_vertices.size() << " vertices and " 
-                      << num_edges << " edges" << std::endl;
-            
-            // Check if IDs are non-continuous
-            bool continuous = true;
-            for (int i = 0; i < static_cast<int>(unique_vertices.size()); i++) {
-                if (unique_vertices.find(i) == unique_vertices.end()) {
-                    continuous = false;
-                    break;
-                }
-            }
-            
-            if (!continuous) {
-                std::cout << "Detected non-continuous vertex IDs, creating node mapping" << std::endl;
-            }
-        }
-        
-        Graph graph(unique_vertices.size(), num_edges);
-        graph.build_from_edges(src, dst, node_map);
-        
-        if (verbose) {
-            std::cout << "Graph loaded successfully." << std::endl;
-            auto end_time = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
-            std::cout << "Loading time: " << duration << " seconds" << std::endl;
-            graph.print_stats();
-        }
-        
+Graph load_undirected_tsv_edgelist_parallel(const std::string& filename, int num_threads = std::thread::hardware_concurrency(), bool verbose = false) {
+    Graph graph;
+    MappedFile file;
+    
+    if (!file.open(filename)) {
+        std::cerr << "Failed to open file: " << filename << std::endl;
         return graph;
     }
     
-    /**
-     * @brief Write a graph to a TSV edgelist file
-     * 
-     * @param graph The graph to write
-     * @param filepath Path to the output TSV file
-     * @param use_original_ids Whether to use original IDs in the output
-     * @return bool Success status
-     */
-    static bool write_tsv(const Graph& graph, const std::string& filepath, bool use_original_ids = true) {
-        std::ofstream file(filepath);
-        if (!file.is_open()) {
-            std::cerr << "Error: Unable to open file " << filepath << " for writing" << std::endl;
-            return false;
-        }
-        
-        const auto& src = graph.src();
-        const auto& dst = graph.dst();
-        
-        if (use_original_ids && !graph.node_mapping().empty()) {
-            const auto& rev_map = graph.reverse_mapping();
-            
-            for (size_t i = 0; i < graph.num_edges(); i++) {
-                file << rev_map[src[i]] << "\t" << rev_map[dst[i]] << "\n";
-            }
-        } else {
-            for (size_t i = 0; i < graph.num_edges(); i++) {
-                file << src[i] << "\t" << dst[i] << "\n";
-            }
-        }
-        
-        file.close();
-        return true;
+    const char* data = file.data();
+    size_t file_size = file.size();
+    
+    if (verbose) {
+        std::cout << "File size: " << file_size / (1024 * 1024) << " MB" << std::endl;
+        std::cout << "Step 1: Parsing file and collecting edges..." << std::endl;
     }
     
-    /**
-     * @brief Read a clustering file (vertex_id cluster_id format)
-     * 
-     * @param filepath Path to the clustering file
-     * @param verbose Whether to print verbose information
-     * @return std::vector<int> Cluster assignments for each vertex
-     */
-    static std::vector<int> read_clustering(const std::string& filepath, bool verbose = false) {
-        std::ifstream file(filepath);
-        if (!file.is_open()) {
-            std::cerr << "Error: Unable to open clustering file " << filepath << std::endl;
-            return {};
-        }
-        
-        if (verbose) {
-            std::cout << "Reading clustering from " << filepath << std::endl;
-        }
-        
-        std::vector<std::pair<int, int>> node_cluster_pairs;
-        std::string line;
-        
-        // Read all vertex-cluster pairs
-        while (std::getline(file, line)) {
-            if (line.empty() || line[0] == '#') continue;
-            
-            std::istringstream iss(line);
-            int node_id, cluster_id;
-            
-            if (iss >> node_id >> cluster_id) {
-                node_cluster_pairs.emplace_back(node_id, cluster_id);
-            }
-        }
-        
-        file.close();
-        
-        // Find the maximum vertex ID to determine the size of the result array
-        int max_vertex_id = -1;
-        for (const auto& pair : node_cluster_pairs) {
-            max_vertex_id = std::max(max_vertex_id, pair.first);
-        }
-        
-        // Create and fill the clustering array
-        std::vector<int> clustering(max_vertex_id + 1, -1);  // -1 indicates no cluster assignment
-        
-        for (const auto& pair : node_cluster_pairs) {
-            clustering[pair.first] = pair.second;
-        }
-        
-        if (verbose) {
-            std::cout << "Clustering loaded successfully for " << node_cluster_pairs.size() << " vertices" << std::endl;
-            
-            // Count the number of unique clusters
-            std::unordered_set<int> unique_clusters;
-            for (const auto& pair : node_cluster_pairs) {
-                unique_clusters.insert(pair.second);
-            }
-            std::cout << "Found " << unique_clusters.size() << " unique clusters" << std::endl;
-        }
-        
-        return clustering;
-    }
+    std::vector<std::thread> threads;
+    std::vector<std::unordered_map<uint64_t, uint32_t>> local_node_maps(num_threads);
+    std::vector<std::vector<std::pair<uint64_t, uint64_t>>> local_edges(num_threads);
     
-    /**
-     * @brief Read a clustering file and map to internal vertex IDs
-     * 
-     * @param filepath Path to the clustering file
-     * @param graph The graph with node mapping
-     * @param verbose Whether to print verbose information
-     * @return std::vector<int> Cluster assignments for each vertex (using internal IDs)
-     */
-    static std::vector<int> read_clustering_mapped(const std::string& filepath, 
-                                                 const Graph& graph, 
-                                                 bool verbose = false) {
-        std::vector<std::pair<int, int>> node_cluster_pairs;
-        std::ifstream file(filepath);
-        
-        if (!file.is_open()) {
-            std::cerr << "Error: Unable to open clustering file " << filepath << std::endl;
-            return {};
-        }
-        
-        if (verbose) {
-            std::cout << "Reading clustering from " << filepath << std::endl;
-        }
-        
-        std::string line;
-        while (std::getline(file, line)) {
-            if (line.empty() || line[0] == '#') continue;
-            
-            std::istringstream iss(line);
-            int node_id, cluster_id;
-            
-            if (iss >> node_id >> cluster_id) {
-                node_cluster_pairs.emplace_back(node_id, cluster_id);
-            }
-        }
-        
-        file.close();
-        
-        // Create clustering array for internal vertex IDs
-        std::vector<int> clustering(graph.num_vertices(), -1);
-        const auto& node_map = graph.node_mapping();
-        
-        for (const auto& pair : node_cluster_pairs) {
-            int original_id = pair.first;
-            int cluster_id = pair.second;
-            
-            auto it = node_map.find(original_id);
-            if (it != node_map.end()) {
-                int internal_id = it->second;
-                clustering[internal_id] = cluster_id;
-            }
-        }
-        
-        if (verbose) {
-            // Count vertices with cluster assignments
-            int assigned = 0;
-            for (int c : clustering) {
-                if (c != -1) assigned++;
-            }
-            
-            std::cout << "Mapped clustering to " << assigned << " vertices (out of " 
-                     << graph.num_vertices() << ")" << std::endl;
-            
-            // Count unique clusters
-            std::unordered_set<int> unique_clusters;
-            for (int c : clustering) {
-                if (c != -1) unique_clusters.insert(c);
-            }
-            std::cout << "Found " << unique_clusters.size() << " unique clusters" << std::endl;
-        }
-        
-        return clustering;
-    }
+    std::atomic<size_t> next_chunk_start(0);
+    std::atomic<size_t> processed_bytes(0);
+    size_t chunk_size = 64 * 1024 * 1024; // 64 MB chunks
     
-    /**
-     * @brief Write a clustering to a file (vertex_id cluster_id format)
-     * 
-     * @param clustering The clustering assignments (using internal IDs)
-     * @param graph The graph with node mapping
-     * @param filepath Path to the output file
-     * @param use_original_ids Whether to use original IDs in the output
-     * @return bool Success status
-     */
-    static bool write_clustering(const std::vector<int>& clustering, 
-                               const Graph& graph,
-                               const std::string& filepath,
-                               bool use_original_ids = true) {
-        std::ofstream file(filepath);
-        if (!file.is_open()) {
-            std::cerr << "Error: Unable to open file " << filepath << " for writing" << std::endl;
-            return false;
-        }
+    auto process_chunk = [&](int thread_id) {
+        local_edges[thread_id].reserve(10000000); // Pre-allocate space for edges
         
-        if (use_original_ids && !graph.node_mapping().empty()) {
-            const auto& rev_map = graph.reverse_mapping();
+        while (true) {
+            // Get next chunk to process
+            size_t chunk_begin = next_chunk_start.fetch_add(chunk_size);
+            if (chunk_begin >= file_size) break;
             
-            for (size_t i = 0; i < clustering.size(); i++) {
-                if (clustering[i] != -1) {  // Only write assigned vertices
-                    file << rev_map[i] << "\t" << clustering[i] << "\n";
+            size_t chunk_end = std::min(chunk_begin + chunk_size, file_size);
+            
+            // Adjust chunk_begin to start at beginning of a line
+            if (chunk_begin > 0) {
+                while (chunk_begin < file_size && data[chunk_begin-1] != '\n') {
+                    chunk_begin++;
                 }
             }
-        } else {
-            for (size_t i = 0; i < clustering.size(); i++) {
-                if (clustering[i] != -1) {  // Only write assigned vertices
-                    file << i << "\t" << clustering[i] << "\n";
+            
+            // Process the chunk
+            const char* ptr = data + chunk_begin;
+            const char* end = data + chunk_end;
+            
+            while (ptr < end) {
+                // Parse source node
+                uint64_t src = 0;
+                while (ptr < end && *ptr >= '0' && *ptr <= '9') {
+                    src = src * 10 + (*ptr - '0');
+                    ptr++;
                 }
+                
+                // Skip tab
+                if (ptr < end && *ptr == '\t') ptr++;
+                
+                // Parse target node
+                uint64_t dst = 0;
+                while (ptr < end && *ptr >= '0' && *ptr <= '9') {
+                    dst = dst * 10 + (*ptr - '0');
+                    ptr++;
+                }
+                
+                // Add to local maps
+                local_node_maps[thread_id][src] = 0; // Temporary value
+                local_node_maps[thread_id][dst] = 0; // Temporary value
+                
+                // Store the edge
+                local_edges[thread_id].emplace_back(src, dst);
+                
+                // Skip to next line
+                while (ptr < end && *ptr != '\n') ptr++;
+                if (ptr < end) ptr++; // Skip newline
+            }
+            
+            // Update progress
+            processed_bytes.fetch_add(chunk_end - chunk_begin);
+            
+            if (verbose && thread_id == 0) {
+                double progress = static_cast<double>(processed_bytes) / file_size * 100.0;
+                std::cout << "\rParsing progress: " << std::fixed << std::setprecision(1) 
+                          << progress << "%" << std::flush;
+            }
+        }
+    };
+    
+    // Launch threads for the first pass
+    for (int i = 0; i < num_threads; i++) {
+        threads.emplace_back(process_chunk, i);
+    }
+    
+    // Wait for threads to finish
+    for (auto& t : threads) {
+        t.join();
+    }
+    
+    if (verbose) {
+        std::cout << std::endl; // End the progress line
+        std::cout << "Step 2: Building node ID mapping..." << std::endl;
+    }
+    
+    std::unordered_map<uint64_t, uint32_t>& node_map = graph.node_map;
+    
+    // Report on thread distribution if verbose
+    if (verbose) {
+        for (int i = 0; i < num_threads; i++) {
+            std::cout << "Thread " << i << " processed " 
+                      << local_edges[i].size() << " edges and found "
+                      << local_node_maps[i].size() << " unique nodes." << std::endl;
+        }
+    }
+    
+    for (const auto& local_map : local_node_maps) {
+        for (const auto& entry : local_map) {
+            node_map[entry.first] = 0;
+        }
+    }
+    
+    // Clear local node maps to free memory
+    local_node_maps.clear();
+    
+    // Assign sequential IDs
+    uint32_t next_id = 0;
+    for (auto& entry : node_map) {
+        entry.second = next_id++;
+    }
+    
+    graph.num_nodes = node_map.size();
+    
+    // Create reverse mapping
+    graph.id_map.resize(graph.num_nodes);
+    for (const auto& entry : node_map) {
+        graph.id_map[entry.second] = entry.first;
+    }
+    
+    // Calculate total edges (undirected)
+    for (const auto& local_edge_list : local_edges) {
+        graph.num_edges += local_edge_list.size();
+    }
+    
+    if (verbose) {
+        std::cout << "Found " << graph.num_nodes << " nodes and " 
+                  << graph.num_edges << " undirected edges." << std::endl;
+        std::cout << "Step 3: Counting node degrees..." << std::endl;
+    }
+    
+    // Use atomic vector for thread-safe degree counting
+    std::vector<std::atomic<uint32_t>> degree(graph.num_nodes);
+    for (auto& d : degree) {
+        d.store(0, std::memory_order_relaxed);
+    }
+    
+    // Launch threads to count degrees
+    threads.clear();
+    
+    auto count_degrees = [&](int thread_id) {
+        for (const auto& edge : local_edges[thread_id]) {
+            uint32_t src_id = node_map[edge.first];
+            uint32_t dst_id = node_map[edge.second];
+            
+            // Increment degree for both source and destination (undirected graph)
+            degree[src_id].fetch_add(1, std::memory_order_relaxed);
+            degree[dst_id].fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    
+    for (int i = 0; i < num_threads; i++) {
+        threads.emplace_back(count_degrees, i);
+    }
+    
+    for (auto& t : threads) {
+        t.join();
+    }
+    
+    if (verbose) {
+        std::cout << "Step 4: Building row pointers..." << std::endl;
+    }
+    
+    // Build row pointers (prefix sum)
+    graph.row_ptr.resize(graph.num_nodes + 1);
+    graph.row_ptr[0] = 0;
+    
+    for (size_t i = 0; i < graph.num_nodes; i++) {
+        graph.row_ptr[i + 1] = graph.row_ptr[i] + degree[i].load(std::memory_order_relaxed);
+    }
+    
+    if (verbose) {
+        std::cout << "Step 5: Building CSR structure in parallel..." << std::endl;
+    }
+    
+    // Prepare for parallel CSR building
+    
+    // Allocate column indices vector
+    size_t total_directed_edges = graph.row_ptr.back();
+    graph.col_idx.resize(total_directed_edges);
+    
+    // Use atomic offsets for thread-safe insertion
+    std::vector<std::atomic<uint32_t>> offsets(graph.num_nodes);
+    for (size_t i = 0; i < graph.num_nodes; i++) {
+        offsets[i].store(0, std::memory_order_relaxed);
+    }
+    
+    // Launch threads to fill CSR
+    threads.clear();
+    std::atomic<size_t> edges_processed(0);
+    
+    auto fill_csr = [&](int thread_id) {
+        size_t local_edges_count = local_edges[thread_id].size();
+        size_t local_processed = 0;
+        
+        for (const auto& edge : local_edges[thread_id]) {
+            uint32_t src_id = node_map[edge.first];
+            uint32_t dst_id = node_map[edge.second];
+            
+            // Add edge src -> dst
+            uint32_t pos1 = graph.row_ptr[src_id] + offsets[src_id].fetch_add(1, std::memory_order_relaxed);
+            graph.col_idx[pos1] = dst_id;
+            
+            // Add edge dst -> src (undirected)
+            uint32_t pos2 = graph.row_ptr[dst_id] + offsets[dst_id].fetch_add(1, std::memory_order_relaxed);
+            graph.col_idx[pos2] = src_id;
+            
+            local_processed++;
+            
+            // Update progress
+            if (verbose && thread_id == 0 && local_processed % 1000000 == 0) {
+                size_t total_processed = edges_processed.fetch_add(1000000);
+                double progress = static_cast<double>(total_processed) / graph.num_edges * 100.0;
+                std::cout << "\rCSR building progress: " << std::fixed << std::setprecision(1) 
+                          << progress << "%" << std::flush;
             }
         }
         
-        file.close();
-        return true;
+        // Account for any remaining edges
+        if (local_processed % 1000000 != 0) {
+            edges_processed.fetch_add(local_processed % 1000000);
+        }
+    };
+    
+    for (int i = 0; i < num_threads; i++) {
+        threads.emplace_back(fill_csr, i);
     }
-};
+    
+    for (auto& t : threads) {
+        t.join();
+    }
+    
+    if (verbose) {
+        std::cout << std::endl; // End the progress line
+    }
+    
+    // Free memory from edge lists
+    local_edges.clear();
+    
+    if (verbose) {
+        std::cout << "Loaded undirected graph with " << graph.num_nodes << " nodes and " 
+                  << graph.num_edges << " edges (" << total_directed_edges << " directed edges in CSR)" << std::endl;
+    }
+    
+    return graph;
+}
+
+// Save graph to a TSV edgelist file
+bool save_graph_edgelist(const std::string& filename, const Graph& graph, bool verbose = false) {
+    std::ofstream outfile(filename);
+    if (!outfile.is_open()) {
+        std::cerr << "Failed to open output file: " << filename << std::endl;
+        return false;
+    }
+    
+    if (verbose) {
+        std::cout << "Saving graph to: " << filename << std::endl;
+    }
+    
+    size_t edges_written = 0;
+    size_t total_edges = graph.num_edges;
+    
+    // For each node, write its edges (but only in one direction to avoid duplicates)
+    for (uint32_t node_id = 0; node_id < graph.num_nodes; ++node_id) {
+        uint64_t original_node_id = graph.id_map[node_id];
+        
+        for (uint32_t i = graph.row_ptr[node_id]; i < graph.row_ptr[node_id + 1]; ++i) {
+            uint32_t neighbor_id = graph.col_idx[i];
+            
+            // Only write edges where node_id < neighbor_id to avoid duplicates
+            if (node_id < neighbor_id) {
+                uint64_t original_neighbor_id = graph.id_map[neighbor_id];
+                outfile << original_node_id << "\t" << original_neighbor_id << "\n";
+                
+                edges_written++;
+                if (verbose && edges_written % 1000000 == 0) {
+                    double progress = 100.0 * edges_written / total_edges;
+                    std::cout << "\rSaving edges: " << std::fixed << std::setprecision(1) 
+                              << progress << "%" << std::flush;
+                }
+            }
+        }
+    }
+    
+    if (verbose) {
+        std::cout << std::endl; // End progress line
+        std::cout << "Saved " << edges_written << " edges" << std::endl;
+    }
+    
+    outfile.close();
+    return true;
+}
+
+#endif // GRAPH_IO_H

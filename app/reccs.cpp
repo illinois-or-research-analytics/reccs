@@ -101,82 +101,17 @@ int main(int argc, char** argv) {
     }
 
     // Load the clustered SBM graph with node mapping
-    Graph clustered_sbm_graph = GraphIO::read_tsv(clustered_sbm_graph_path, verbose);
-    
-    // Load the clustered clustering and map to internal IDs
-    std::vector<int> clustered_clustering = GraphIO::read_clustering_mapped(
-        clustered_clusters_path, clustered_sbm_graph, verbose);
+    Graph clustered_sbm_graph = load_undirected_tsv_edgelist_parallel(
+        clustered_sbm_graph_path, num_threads, verbose);
 
     if (verbose) {
         std::cout << "Successfully loaded clustered SBM graph and clustering." << std::endl;
-        clustered_sbm_graph.print_stats();
-        
-        // Count vertices with valid cluster assignments
-        int assigned_vertices = 0;
-        std::unordered_set<int> unique_clusters;
-        
-        for (size_t i = 0; i < clustered_clustering.size(); i++) {
-            if (clustered_clustering[i] != -1) {
-                assigned_vertices++;
-                unique_clusters.insert(clustered_clustering[i]);
-            }
-        }
-        
-        std::cout << "Clustering statistics:" << std::endl;
-        std::cout << "  Assigned vertices: " << assigned_vertices << " out of " 
-                  << clustered_sbm_graph.num_vertices() << std::endl;
-        std::cout << "  Unique clusters: " << unique_clusters.size() << std::endl;
-        
+
         // Print timing information
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
         std::cout << "Total execution time: " << duration << " seconds" << std::endl;
     }
-    
-    // Demonstrate working with original vs. internal IDs
-    if (verbose) {
-        std::cout << "\nNode mapping example:" << std::endl;
-        
-        // Show a sample of the node mapping
-        const auto& node_map = clustered_sbm_graph.node_mapping();
-        const auto& rev_map = clustered_sbm_graph.reverse_mapping();
-        
-        int sample_size = std::min(5, static_cast<int>(clustered_sbm_graph.num_vertices()));
-        std::cout << "Sample of node mapping (original ID -> internal ID):" << std::endl;
-        
-        int counter = 0;
-        for (const auto& pair : node_map) {
-            if (counter++ >= sample_size) break;
-            std::cout << "  " << pair.first << " -> " << pair.second << std::endl;
-        }
-        
-        // Example of using original IDs to access the graph
-        if (!node_map.empty()) {
-            // Pick the first original ID from the mapping
-            int original_id = rev_map[0];
-            std::vector<int> neighbors = clustered_sbm_graph.get_neighbors_original(original_id);
-            
-            std::cout << "Neighbors of vertex " << original_id << " (original ID): ";
-            if (neighbors.empty()) {
-                std::cout << "none" << std::endl;
-            } else {
-                for (size_t i = 0; i < std::min(5UL, neighbors.size()); i++) {
-                    std::cout << neighbors[i] << " ";
-                }
-                if (neighbors.size() > 5) {
-                    std::cout << "... (" << neighbors.size() << " total)";
-                }
-                std::cout << std::endl;
-            }
-        }
-    }
-    
-    // You can now work with the loaded graph and clustering data
-    // For example, you could:
-    // 1. Analyze cluster properties
-    // 2. Calculate graph metrics
-    // 3. Visualize the graph structure
-    // 4. Compare the SBM-generated graph with the original input
     
     return 0;
 }

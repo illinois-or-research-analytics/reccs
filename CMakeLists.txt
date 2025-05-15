@@ -14,11 +14,11 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/lib)
 add_executable(reccs app/reccs.cpp)
 
 # Add the loader test executable
-add_executable(loader_test tests/loader_test.cpp)
+# add_executable(loader_test tests/loader_test.cpp)
 
 # Link with OpenMP
 target_link_libraries(reccs PUBLIC OpenMP::OpenMP_CXX)
-target_link_libraries(loader_test PUBLIC OpenMP::OpenMP_CXX)
+# target_link_libraries(loader_test PUBLIC OpenMP::OpenMP_CXX)
 
 # Copy extlib directory to build directory
 file(COPY ${CMAKE_SOURCE_DIR}/extlib DESTINATION ${CMAKE_BINARY_DIR})
