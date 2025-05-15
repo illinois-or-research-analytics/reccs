@@ -1,5 +1,7 @@
 .vscode/
 
+*runtime_plots/
+
 *_sbm.tsv
 
 *temp*
