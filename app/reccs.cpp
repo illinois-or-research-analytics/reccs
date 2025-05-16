@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
     if (verbose) {
         std::cout << "Creating temporary directory for intermediate files..." << std::endl;
     }
-    std::string temp_dir = "temp";
+    std::string temp_dir = "temp" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
 
     // Remove existing temp directory if it exists
     if (fs::exists(temp_dir)) {
@@ -91,7 +91,6 @@ int main(int argc, char** argv) {
     
     // Define paths to the SBM-generated files
     std::string clustered_sbm_graph_path = temp_dir + "/clustered_sbm/syn_sbm.tsv";
-    std::string clustered_clusters_path = temp_dir + "/non_singleton_clusters.tsv";
     
     // Check if files exist
     if (!fs::exists(clustered_sbm_graph_path)) {
@@ -99,17 +98,12 @@ int main(int argc, char** argv) {
         return 1;
     }
     
-    if (!fs::exists(clustered_clusters_path)) {
-        std::cerr << "Error: Clustered clustering file not found at: " << clustered_clusters_path << std::endl;
-        return 1;
-    }
-
     // Load the clustered SBM graph with node mapping
     Graph clustered_sbm_graph = load_undirected_tsv_edgelist_parallel(
         clustered_sbm_graph_path, num_threads, verbose);
 
     if (verbose) {
-        std::cout << "Successfully loaded clustered SBM graph and clustering." << std::endl;
+        std::cout << "Successfully loaded clustered SBM graph." << std::endl;
 
         // Print timing information
         auto end_time = std::chrono::high_resolution_clock::now();
