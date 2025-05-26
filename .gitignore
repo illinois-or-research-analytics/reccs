@@ -1,8 +1,13 @@
 .vscode/
 
+*runtime_plots/
+*cluster_subgraphs/
+
 *_sbm.tsv
 
 *temp*
+
+cen*
 
 # build
 build/

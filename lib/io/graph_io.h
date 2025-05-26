@@ -12,10 +12,10 @@
 #include <utility>
 #include <chrono>
 #include "../data_structures/graph.h"
-#include "../data_structures/mapped_file.h"
+#include "mapped_file.h"
 
-CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int num_threads = std::thread::hardware_concurrency(), bool verbose = false) {
-    CSRGraph graph;
+Graph load_undirected_tsv_edgelist_parallel(const std::string& filename, int num_threads = std::thread::hardware_concurrency(), bool verbose = false) {
+    Graph graph;
     MappedFile file;
     
     if (!file.open(filename)) {
@@ -278,7 +278,7 @@ CSRGraph load_undirected_tsv_edgelist_parallel(const std::string& filename, int 
 }
 
 // Save graph to a TSV edgelist file
-bool save_graph_edgelist(const std::string& filename, const CSRGraph& graph, bool verbose = false) {
+bool save_graph_edgelist(const std::string& filename, const Graph& graph, bool verbose = false) {
     std::ofstream outfile(filename);
     if (!outfile.is_open()) {
         std::cerr << "Failed to open output file: " << filename << std::endl;

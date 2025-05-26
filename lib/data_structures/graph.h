@@ -10,7 +10,7 @@
 #include <omp.h>
 
 // CSR representation for undirected graph
-struct CSRGraph {
+struct Graph {
     std::vector<uint32_t> row_ptr;  // Offsets for each node's edge list
     std::vector<uint32_t> col_idx;  // Target nodes
     
@@ -57,7 +57,7 @@ struct CSRGraph {
 };
 
 // Sort adjacency lists in parallel
-void sort_adjacency_lists_parallel(CSRGraph& graph, int num_threads, bool verbose = false) {
+void sort_adjacency_lists_parallel(Graph& graph, int num_threads, bool verbose = false) {
     if (verbose) {
         std::cout << "Sorting adjacency lists..." << std::endl;
     }
@@ -74,7 +74,7 @@ void sort_adjacency_lists_parallel(CSRGraph& graph, int num_threads, bool verbos
 }
 
 // Remove self-loops and duplicate edges in parallel
-void clean_graph_parallel(CSRGraph& graph, int num_threads, bool verbose = false) {
+void clean_graph_parallel(Graph& graph, int num_threads, bool verbose = false) {
     if (verbose) {
         std::cout << "Removing self-loops and duplicate edges..." << std::endl;
     }
@@ -154,7 +154,7 @@ void clean_graph_parallel(CSRGraph& graph, int num_threads, bool verbose = false
 }
 
 // Simple test function to validate the graph
-void test_graph(const CSRGraph& graph) {
+void test_graph(const Graph& graph) {
     std::cout << "Testing graph integrity..." << std::endl;
     
     size_t total_edges = 0;
