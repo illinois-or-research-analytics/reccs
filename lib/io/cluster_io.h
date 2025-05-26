@@ -15,7 +15,7 @@
 #include <iomanip>
 #include "../data_structures/clustering.h"
 #include "../data_structures/graph.h"
-#include "../data_structures/mapped_file.h"
+#include "mapped_file.h"
 
 // Helper struct for parallel loading
 struct ClusteringParseResult {
@@ -78,7 +78,7 @@ ClusteringParseResult parse_clustering_chunk(const char* data, size_t begin, siz
 }
 
 // Load clustering from a TSV file (node_id, cluster_id)
-Clustering load_clustering(const std::string& filename, const CSRGraph& graph, 
+Clustering load_clustering(const std::string& filename, const Graph& graph, 
                            int num_threads = std::thread::hardware_concurrency(),
                            bool verbose = false) {
     Clustering clustering;
@@ -202,7 +202,7 @@ Clustering load_clustering(const std::string& filename, const CSRGraph& graph,
 // Save a filtered clustering containing only nodes that exist in the given graph
 bool save_filtered_clustering(const std::string& filename, 
     const Clustering& clustering,
-    const CSRGraph& graph,
+    const Graph& graph,
     const std::unordered_map<uint32_t, uint32_t>& node_map,
     bool verbose = false) {
     std::ofstream outfile(filename);

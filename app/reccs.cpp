@@ -7,7 +7,9 @@
 #include <thread>
 #include <unordered_set>
 #include "../lib/data_structures/graph.h"
+#include "../lib/data_structures/clustering.h"
 #include "../lib/io/graph_io.h"
+#include "../lib/io/cluster_io.h"
 #include "../lib/utils/orchestrator.h"
 
 namespace fs = std::filesystem;
@@ -104,7 +106,13 @@ int main(int argc, char** argv) {
 
     if (verbose) {
         std::cout << "Successfully loaded clustered SBM graph." << std::endl;
+    }
 
+    // Load the clustering from the specified file
+    Clustering clustering = load_clustering(cluster_filename, clustered_sbm_graph, num_threads, verbose);
+
+    if (verbose) {
+        std::cout << "Successfully loaded clustering with " << clustering.size() << " clusters." << std::endl;
         // Print timing information
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();

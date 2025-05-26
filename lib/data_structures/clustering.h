@@ -196,6 +196,11 @@ struct Clustering {
         }
         return count;
     }
+
+    // Get the total number of clusters (including empty ones)
+    size_t size() const {
+        return cluster_nodes.size();
+    }
 };
 
 #endif // CLUSTERING_H
