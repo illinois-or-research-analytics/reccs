@@ -11,6 +11,7 @@
 #include "../lib/data_structures/graph_task_queue.h"
 #include "../lib/io/graph_io.h"
 #include "../lib/io/cluster_io.h"
+#include "../lib/io/requirements_io.h"
 #include "../lib/utils/orchestrator.h"
 
 namespace fs = std::filesystem;
@@ -114,6 +115,23 @@ int main(int argc, char** argv) {
 
     if (verbose) {
         std::cout << "Successfully loaded clustering with " << clustering.size() << " clusters." << std::endl;
+    }
+
+    // Load the cluster requirements
+    std::string requirements_filename = temp_dir + "/clustered_stats.csv";
+    if (verbose) {
+        std::cout << "Loading cluster requirements from: " << requirements_filename << std::endl;
+    }
+    
+    ConnectivityRequirementsLoader requirements_loader;
+    if (!requirements_loader.load_from_csv(requirements_filename, verbose)) {
+        std::cerr << "Error: Failed to load cluster requirements from " << requirements_filename << std::endl;
+        return 1;
+    }
+
+    // Print loaded requirements statistics
+    if (verbose) {
+        requirements_loader.print_statistics();
     }
 
     // Load the graph task queue
