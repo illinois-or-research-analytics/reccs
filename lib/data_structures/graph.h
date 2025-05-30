@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <iostream>
 #include <algorithm>
+#include <set>
 #include <atomic>
 #include <omp.h>
 
@@ -151,6 +152,121 @@ void clean_graph_parallel(Graph& graph, int num_threads, bool verbose = false) {
     if (verbose) {
         std::cout << "Removed " << removed_edges << " edges (self-loops and duplicates)" << std::endl;
     }
+}
+
+void add_edges_batch(Graph& g, const std::vector<std::pair<uint32_t, uint32_t>>& edges_to_add) {
+    if (edges_to_add.empty()) return;
+    
+    // Create temporary adjacency structure using sets to avoid duplicates
+    std::vector<std::set<uint32_t>> temp_adj(g.num_nodes);
+    
+    // First, add all existing edges from CSR to temp structure
+    for (uint32_t u = 0; u < g.num_nodes; ++u) {
+        for (uint32_t idx = g.row_ptr[u]; idx < g.row_ptr[u + 1]; ++idx) {
+            uint32_t v = g.col_idx[idx];
+            temp_adj[u].insert(v);
+        }
+    }
+    
+    // Add new edges (both directions for undirected graph)
+    size_t new_edges_added = 0;
+    for (const auto& [u, v] : edges_to_add) {
+        if (u >= g.num_nodes || v >= g.num_nodes || u == v) continue;
+        
+        // Check if edge already exists
+        if (temp_adj[u].count(v) == 0) {
+            temp_adj[u].insert(v);
+            temp_adj[v].insert(u);
+            new_edges_added++;
+        }
+    }
+    
+    // Count total edges for new CSR
+    size_t total_directed_edges = 0;
+    for (const auto& neighbors : temp_adj) {
+        total_directed_edges += neighbors.size();
+    }
+    
+    // Rebuild CSR structure
+    std::vector<uint32_t> new_row_ptr(g.num_nodes + 1);
+    std::vector<uint32_t> new_col_idx;
+    new_col_idx.reserve(total_directed_edges);
+    
+    new_row_ptr[0] = 0;
+    for (uint32_t u = 0; u < g.num_nodes; ++u) {
+        // Add all neighbors in sorted order (set maintains order)
+        for (uint32_t v : temp_adj[u]) {
+            new_col_idx.push_back(v);
+        }
+        new_row_ptr[u + 1] = new_col_idx.size();
+    }
+    
+    // Update graph structure
+    g.row_ptr = std::move(new_row_ptr);
+    g.col_idx = std::move(new_col_idx);
+    g.num_edges += new_edges_added;
+    
+    std::cout << "Batch added " << new_edges_added << " new edges" << std::endl;
+}
+
+// Alternative: More memory efficient version using sorting instead of sets
+void add_edges_batch_efficient(Graph& g, const std::vector<std::pair<uint32_t, uint32_t>>& edges_to_add) {
+    if (edges_to_add.empty()) return;
+    
+    // Create edge list including existing and new edges
+    std::vector<std::pair<uint32_t, uint32_t>> all_edges;
+    
+    // Reserve space
+    all_edges.reserve(g.col_idx.size() + edges_to_add.size() * 2);
+    
+    // Add existing edges
+    for (uint32_t u = 0; u < g.num_nodes; ++u) {
+        for (uint32_t idx = g.row_ptr[u]; idx < g.row_ptr[u + 1]; ++idx) {
+            all_edges.push_back({u, g.col_idx[idx]});
+        }
+    }
+    
+    // Add new edges (both directions)
+    for (const auto& [u, v] : edges_to_add) {
+        if (u >= g.num_nodes || v >= g.num_nodes || u == v) continue;
+        all_edges.push_back({u, v});
+        all_edges.push_back({v, u});
+    }
+    
+    // Sort edges
+    std::sort(all_edges.begin(), all_edges.end());
+    
+    // Remove duplicates
+    all_edges.erase(std::unique(all_edges.begin(), all_edges.end()), all_edges.end());
+    
+    // Count edges per node
+    std::vector<uint32_t> edge_counts(g.num_nodes, 0);
+    for (const auto& [u, v] : all_edges) {
+        edge_counts[u]++;
+    }
+    
+    // Build new CSR
+    std::vector<uint32_t> new_row_ptr(g.num_nodes + 1);
+    std::vector<uint32_t> new_col_idx(all_edges.size());
+    
+    new_row_ptr[0] = 0;
+    for (uint32_t i = 0; i < g.num_nodes; ++i) {
+        new_row_ptr[i + 1] = new_row_ptr[i] + edge_counts[i];
+    }
+    
+    // Fill col_idx
+    std::vector<uint32_t> current_pos = new_row_ptr; // Copy for indexing
+    for (const auto& [u, v] : all_edges) {
+        new_col_idx[current_pos[u]++] = v;
+    }
+    
+    // Update graph
+    size_t old_total = g.col_idx.size();
+    g.row_ptr = std::move(new_row_ptr);
+    g.col_idx = std::move(new_col_idx);
+    g.num_edges = g.col_idx.size() / 2; // Update edge count
+    
+    std::cout << "Batch added " << (g.col_idx.size() - old_total) / 2 << " new edges" << std::endl;
 }
 
 // Simple test function to validate the graph

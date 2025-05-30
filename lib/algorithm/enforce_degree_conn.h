@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <random>
 #include <set>
-#include "graph.h"
+#include "../data_structures/graph.h"
 
 // Find connected components using BFS
 std::vector<std::vector<uint32_t>> find_connected_components(const Graph& g) {
@@ -68,6 +68,35 @@ struct NodeDegree {
 
 // Combined degree enforcement and connectivity using min heap strategy
 void enforce_degree_and_connectivity(Graph& g, uint32_t min_degree) {
+    // Check if the requirement is even possible
+    if (min_degree >= g.num_nodes) {
+        std::cerr << "Error: min_degree " << min_degree 
+                  << " >= num_nodes " << g.num_nodes << std::endl;
+        return;
+    }
+    
+    // For small graphs with high min_degree, check if it's possible
+    if (g.num_nodes > 1 && min_degree > g.num_nodes - 1) {
+        std::cerr << "Error: Impossible to achieve min_degree " << min_degree 
+                  << " with " << g.num_nodes << " nodes" << std::endl;
+        return;
+    }
+    
+    // Build hash set of existing edges for O(1) lookup
+    std::unordered_set<uint64_t> existing_edges;
+    for (uint32_t u = 0; u < g.num_nodes; ++u) {
+        for (uint32_t idx = g.row_ptr[u]; idx < g.row_ptr[u + 1]; ++idx) {
+            uint32_t v = g.col_idx[idx];
+            if (u < v) { // Store each edge once
+                existing_edges.insert((static_cast<uint64_t>(u) << 32) | v);
+            }
+        }
+    }
+    
+    auto edge_exists_fast = [&existing_edges](uint32_t u, uint32_t v) -> bool {
+        if (u > v) std::swap(u, v);
+        return existing_edges.count((static_cast<uint64_t>(u) << 32) | v) > 0;
+    };
     // Track edges to add (as pairs where first < second)
     std::set<std::pair<uint32_t, uint32_t>> edges_to_add;
     
@@ -136,7 +165,7 @@ void enforce_degree_and_connectivity(Graph& g, uint32_t min_degree) {
         uint32_t u = spine_nodes[i];
         uint32_t v = spine_nodes[i + 1];
         
-        if (!edge_exists(g, u, v)) {
+        if (!edge_exists_fast(u, v)) {
             if (u > v) std::swap(u, v);
             edges_to_add.insert({u, v});
             current_degrees[u]++;
@@ -156,7 +185,15 @@ void enforce_degree_and_connectivity(Graph& g, uint32_t min_degree) {
     }
     
     // Step 4: Connect low-degree nodes, prioritizing connections between low-degree nodes
-    while (!degree_heap.empty()) {
+    size_t iterations = 0;
+    const size_t MAX_ITERATIONS = g.num_nodes * 10; // Prevent infinite loops
+    
+    while (!degree_heap.empty() && iterations < MAX_ITERATIONS) {
+        iterations++;
+        if (iterations % 1000 == 0) {
+            std::cout << "Progress: " << iterations << " iterations, " 
+                      << degree_heap.size() << " nodes remaining" << std::endl;
+        }
         NodeDegree nd = degree_heap.top();
         degree_heap.pop();
         uint32_t u = nd.node;
@@ -174,7 +211,7 @@ void enforce_degree_and_connectivity(Graph& g, uint32_t min_degree) {
             degree_heap.pop();
             uint32_t v = other.node;
             
-            if (!edge_exists(g, u, v) && 
+            if (!edge_exists_fast(u, v) && 
                 edges_to_add.count({std::min(u,v), std::max(u,v)}) == 0) {
                 
                 // Add edge
@@ -205,10 +242,16 @@ void enforce_degree_and_connectivity(Graph& g, uint32_t min_degree) {
             std::vector<uint32_t> candidates;
             
             for (uint32_t v = 0; v < g.num_nodes; ++v) {
-                if (v != u && !edge_exists(g, u, v) && 
+                if (v != u && !edge_exists_fast(u, v) && 
                     edges_to_add.count({std::min(u,v), std::max(u,v)}) == 0) {
                     candidates.push_back(v);
                 }
+            }
+            
+            // Check if we have enough candidates
+            if (candidates.size() < min_degree - current_degrees[u]) {
+                std::cerr << "Warning: Node " << u << " cannot reach degree " << min_degree
+                          << " (only " << candidates.size() << " candidates available)" << std::endl;
             }
             
             // Sort candidates by degree (prefer lower degree nodes)
@@ -236,10 +279,9 @@ void enforce_degree_and_connectivity(Graph& g, uint32_t min_degree) {
         }
     }
     
-    // Step 5: Actually add the edges to the graph
-    for (const auto& [u, v] : edges_to_add) {
-        g.add_edge(u, v);
-    }
+    // Step 5: Actually add the edges to the graph using batch addition
+    std::vector<std::pair<uint32_t, uint32_t>> edges_vector(edges_to_add.begin(), edges_to_add.end());
+    add_edges_batch(g, edges_vector);
     
     std::cout << "Added " << edges_to_add.size() << " edges for degree " 
               << min_degree << " and connectivity" << std::endl;

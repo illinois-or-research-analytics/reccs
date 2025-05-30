@@ -13,6 +13,7 @@
 #include "../lib/io/cluster_io.h"
 #include "../lib/io/requirements_io.h"
 #include "../lib/utils/orchestrator.h"
+#include "../lib/algorithm/enforce_degree_conn.h"
 
 namespace fs = std::filesystem;
 
@@ -136,7 +137,31 @@ int main(int argc, char** argv) {
 
     // Load the graph task queue
     GraphTaskQueue task_queue;
+
+    // Set up the task functions
+    task_queue.set_task_functions(
+        // Connectivity enforcement (handles both degree and connectivity)
+        [](Graph& g, uint32_t min_degree) {
+            enforce_degree_and_connectivity(g, min_degree);
+        },
+        
+        // WCC stitching
+        [](Graph& g) {
+            std::cout << "  Processing WCC stitching on graph with " 
+                      << g.num_nodes << " nodes" << std::endl;
+            // TODO: Implement WCC stitching
+        },
+        
+        // Degree sequence matching
+        [](Graph& g) {
+            std::cout << "  Matching degree sequence on graph with " 
+                      << g.num_nodes << " nodes" << std::endl;
+            // TODO: Implement degree sequence matching
+        }
+    );
+
     task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader);
+    task_queue.process_all_tasks();
 
     if (verbose) {
         std::cout << "Initialized task queue with " << task_queue.queue_size() << " tasks." << std::endl;
