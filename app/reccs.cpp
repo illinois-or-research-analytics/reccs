@@ -136,7 +136,7 @@ int main(int argc, char** argv) {
 
     // Load the graph task queue
     GraphTaskQueue task_queue;
-    task_queue.initialize_queue(clustered_sbm_graph, clustering);
+    task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader);
 
     if (verbose) {
         std::cout << "Initialized task queue with " << task_queue.queue_size() << " tasks." << std::endl;
