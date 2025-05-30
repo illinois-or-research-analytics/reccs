@@ -1,7 +1,10 @@
 .vscode/
 
+experiments/
+
 *runtime_plots/
 *cluster_subgraphs/
+*largest_clusters/
 
 *_sbm.tsv
 
