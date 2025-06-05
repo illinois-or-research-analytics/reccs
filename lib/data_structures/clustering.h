@@ -16,6 +16,9 @@ struct Clustering {
     
     // Maps cluster index to the set of nodes in that cluster
     std::vector<std::unordered_set<uint32_t>> cluster_nodes;
+
+    // Maps cluster index to the set of missing nodes in that cluster
+    std::vector<std::unordered_set<uint32_t>> cluster_missing_nodes;
     
     // Maps cluster index to original cluster ID (string)
     std::vector<std::string> cluster_ids;
@@ -31,6 +34,16 @@ struct Clustering {
             return empty_set;
         }
         return cluster_nodes[it->second];
+    }
+
+    // Get all missing nodes in a specific cluster by original ID
+    const std::unordered_set<uint32_t>& get_cluster_missing_nodes(const std::string& cluster_id) const {
+        static const std::unordered_set<uint32_t> empty_set;
+        auto it = cluster_id_to_idx.find(cluster_id);
+        if (it == cluster_id_to_idx.end()) {
+            return empty_set;
+        }
+        return cluster_missing_nodes[it->second];
     }
     
     // Get all nodes in a specific cluster by internal index
@@ -91,6 +104,7 @@ struct Clustering {
         cluster_id_to_idx[cluster_id] = new_idx;
         cluster_ids.push_back(cluster_id);
         cluster_nodes.emplace_back();
+        cluster_missing_nodes.emplace_back();
         return new_idx;
     }
     
@@ -108,6 +122,12 @@ struct Clustering {
         uint32_t cluster_idx = add_or_get_cluster(cluster_id);
         node_to_cluster_idx[node_id] = cluster_idx;
         cluster_nodes[cluster_idx].insert(node_id);
+    }
+
+    // Assign a missing node to a cluster
+    void assign_missing_node_to_cluster(uint32_t node_id, const std::string& cluster_id) {
+        uint32_t cluster_idx = add_or_get_cluster(cluster_id);
+        cluster_missing_nodes[cluster_idx].insert(node_id);
     }
     
     // Reset/initialize the clustering

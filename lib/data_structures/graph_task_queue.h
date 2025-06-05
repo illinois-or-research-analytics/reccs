@@ -51,20 +51,33 @@ private:
     
     // Extract subgraph for a cluster
     std::shared_ptr<Graph> extract_subgraph(const Graph& original, 
-                                           const std::unordered_set<uint32_t>& nodes) {
+                                           const std::unordered_set<uint32_t>& nodes, 
+                                           const std::unordered_set<uint32_t>& missing_nodes = {}) {
         auto subgraph = std::make_shared<Graph>();
+        
+        // Total nodes = existing nodes + missing nodes
+        uint32_t total_nodes = nodes.size() + missing_nodes.size();
         
         // Create node mapping from original to subgraph
         std::unordered_map<uint32_t, uint32_t> node_to_sub;
+        std::unordered_map<uint64_t, uint32_t> missing_to_sub;
         uint32_t sub_idx = 0;
+        
+        // Map existing nodes first
         for (uint32_t node : nodes) {
             node_to_sub[node] = sub_idx++;
         }
         
-        subgraph->num_nodes = nodes.size();
+        // Map missing nodes (they will be floaters)
+        for (uint64_t missing_node : missing_nodes) {
+            missing_to_sub[missing_node] = sub_idx++;
+        }
+        
+        subgraph->num_nodes = total_nodes;
         subgraph->row_ptr.resize(subgraph->num_nodes + 1, 0);
         
-        // First pass: count edges for each node in subgraph
+        // First pass: count edges for each existing node in subgraph
+        // Missing nodes will have 0 edges by default
         std::vector<uint32_t> edge_counts(subgraph->num_nodes, 0);
         for (uint32_t orig_node : nodes) {
             uint32_t sub_node = node_to_sub[orig_node];
@@ -76,6 +89,7 @@ private:
                 }
             }
         }
+        // Note: Missing nodes already have edge_counts[i] = 0, so they remain floaters
         
         // Build row_ptr
         for (uint32_t i = 0; i < subgraph->num_nodes; i++) {
@@ -85,7 +99,8 @@ private:
         // Allocate col_idx
         subgraph->col_idx.resize(subgraph->row_ptr.back());
         
-        // Second pass: fill col_idx
+        // Second pass: fill col_idx for existing nodes only
+        // Missing nodes have no edges to fill
         std::vector<uint32_t> current_pos(subgraph->num_nodes, 0);
         for (uint32_t i = 0; i < subgraph->num_nodes; i++) {
             current_pos[i] = subgraph->row_ptr[i];
@@ -103,15 +118,23 @@ private:
             }
         }
         
-        // Store node mappings if needed
+        // Store node mappings for both existing and missing nodes
         subgraph->node_map.clear();
         subgraph->id_map.resize(subgraph->num_nodes);
+        
+        // Map existing nodes
         for (const auto& [orig, sub] : node_to_sub) {
             if (original.id_map.size() > orig) {
                 uint64_t original_id = original.id_map[orig];
                 subgraph->node_map[original_id] = sub;
                 subgraph->id_map[sub] = original_id;
             }
+        }
+        
+        // Map missing nodes (they use their original IDs directly)
+        for (const auto& [missing_id, sub] : missing_to_sub) {
+            subgraph->node_map[missing_id] = sub;
+            subgraph->id_map[sub] = missing_id;
         }
         
         // Count edges (each undirected edge is stored twice in CSR)
@@ -175,11 +198,19 @@ public:
         // Add each non-empty cluster to the queue
         for (uint32_t cluster_idx = 0; cluster_idx < clustering.cluster_nodes.size(); cluster_idx++) {
             const auto& nodes = clustering.cluster_nodes[cluster_idx];
+            const auto& missing_nodes = clustering.cluster_missing_nodes[cluster_idx];
+
+            // Check if cluster has any missing nodes
+            if (!missing_nodes.empty()) {
+                std::cerr << "Warning: Cluster " << clustering.cluster_ids[cluster_idx]
+                            << " has " << missing_nodes.size() 
+                            << " missing nodes" << std::endl;
+            }
             
             if (nodes.empty()) continue;
             
             // Extract subgraph for this cluster
-            auto subgraph = extract_subgraph(graph, nodes);
+            auto subgraph = extract_subgraph(graph, nodes, missing_nodes);
             
             // Get connectivity requirement for this cluster
             std::string cluster_id = clustering.cluster_ids[cluster_idx];

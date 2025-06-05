@@ -168,6 +168,12 @@ Clustering load_clustering(const std::string& filename, const Graph& graph,
                 // Assign node to cluster using the new method
                 clustering.assign_node_to_cluster(node_id, cluster_id);
                 nodes_found++;
+            } else {
+                if (verbose) {
+                    std::cerr << "Warning: Node " << original_node_id 
+                              << " not found in graph" << std::endl;
+                }
+                clustering.assign_missing_node_to_cluster(original_node_id, cluster_id);
             }
             
             // Progress reporting
