@@ -7,6 +7,9 @@
 #include <string>
 #include <unordered_set>
 #include <functional>
+#include <mutex>
+#include <atomic>
+#include <omp.h>
 #include "graph.h"
 #include "clustering.h"
 #include "../io/requirements_io.h"
@@ -43,8 +46,11 @@ struct GraphTask {
 class GraphTaskQueue {
 private:
     std::queue<GraphTask> task_queue;
+    mutable std::mutex queue_mutex;  // Protects the queue
+    std::atomic<size_t> tasks_processed{0};
+    std::atomic<size_t> total_tasks_created{0};
     
-    // Task functions - to be implemented based on your algorithms
+    // Task functions
     std::function<void(Graph&, uint32_t)> connectivity_enforce_fn;
     std::function<void(Graph&)> wcc_stitching_fn;
     std::function<void(Graph&)> deg_seq_matching_fn;
@@ -142,6 +148,25 @@ private:
         
         return subgraph;
     }
+
+    // Thread-safe method to get next task
+    bool try_get_task(GraphTask& task) {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        if (task_queue.empty()) {
+            return false;
+        }
+        
+        task = task_queue.front();
+        task_queue.pop();
+        return true;
+    }
+    
+    // Thread-safe method to add task
+    void add_task(const GraphTask& task) {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        task_queue.push(task);
+        total_tasks_created++;
+    }
     
 public:
     // Constructor
@@ -158,42 +183,19 @@ public:
         deg_seq_matching_fn = deg_seq_match;
     }
     
-    // Initialize queue with all clusters
-    void initialize_queue(const Graph& graph, const Clustering& clustering) {
-        // Clear existing queue
-        while (!task_queue.empty()) {
-            task_queue.pop();
-        }
-        
-        // Add each non-empty cluster to the queue
-        for (uint32_t cluster_idx = 0; cluster_idx < clustering.cluster_nodes.size(); cluster_idx++) {
-            const auto& nodes = clustering.cluster_nodes[cluster_idx];
-            
-            if (nodes.empty()) continue;
-            
-            // Extract subgraph for this cluster
-            auto subgraph = extract_subgraph(graph, nodes);
-            
-            // Add to queue with first task (default min_degree = 1)
-            task_queue.emplace(
-                subgraph,
-                TaskType::CONNECTIVITY_ENFORCE,
-                clustering.cluster_ids[cluster_idx],
-                cluster_idx,
-                1  // default connectivity requirement
-            );
-        }
-        
-        std::cout << "Initialized task queue with " << task_queue.size() << " clusters" << std::endl;
-    }
-    
     // Initialize queue with all clusters and connectivity requirements
     void initialize_queue(const Graph& graph, const Clustering& clustering,
                          const ConnectivityRequirementsLoader& requirements) {
-        // Clear existing queue
-        while (!task_queue.empty()) {
-            task_queue.pop();
+        // Clear existing queue and reset counters
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            while (!task_queue.empty()) {
+                task_queue.pop();
+            }
         }
+        
+        tasks_processed = 0;
+        total_tasks_created = 0;
         
         // Add each non-empty cluster to the queue
         for (uint32_t cluster_idx = 0; cluster_idx < clustering.cluster_nodes.size(); cluster_idx++) {
@@ -225,13 +227,13 @@ public:
             }
             
             // Add to queue with first task
-            task_queue.emplace(
+            add_task(GraphTask(
                 subgraph,
                 TaskType::CONNECTIVITY_ENFORCE,
                 cluster_id,
                 cluster_idx,
                 min_degree
-            );
+            ));
         }
         
         std::cout << "Initialized task queue with " << task_queue.size() 
@@ -240,12 +242,13 @@ public:
     
     // Process one task from the queue
     bool process_next_task() {
-        if (task_queue.empty()) {
-            return false;
+        GraphTask task(nullptr, TaskType::CONNECTIVITY_ENFORCE, "", 0, 0);
+
+        if (!try_get_task(task)) {
+            return false;  // No more tasks
         }
-        
-        GraphTask task = task_queue.front();
-        task_queue.pop();
+
+        int thread_id = omp_get_thread_num();
         
         // Process based on task type
         switch (task.task_type) {
@@ -257,7 +260,7 @@ public:
                 }
                 // Add next task
                 task.task_type = TaskType::WCC_STITCHING;
-                task_queue.push(task);
+                add_task(task);
                 break;
                 
             case TaskType::WCC_STITCHING:
@@ -267,7 +270,7 @@ public:
                 }
                 // Add next task
                 task.task_type = TaskType::DEG_SEQ_MATCHING;
-                task_queue.push(task);
+                add_task(task);
                 break;
                 
             case TaskType::DEG_SEQ_MATCHING:
@@ -279,26 +282,44 @@ public:
                 std::cout << "Completed all tasks for cluster " << task.cluster_id << std::endl;
                 break;
         }
+        // Increment processed tasks
+        tasks_processed++;
         
         return true;
     }
     
     // Process all tasks in the queue
     void process_all_tasks() {
-        size_t tasks_processed = 0;
-        while (process_next_task()) {
-            tasks_processed++;
+        int num_threads = omp_get_max_threads();
+        
+        std::cout << "Starting work-stealing processing with " << num_threads << " threads" << std::endl;
+        
+        #pragma omp parallel num_threads(num_threads)
+        {
+            #pragma omp single
+            {
+                // Create tasks dynamically
+                while (!is_empty()) {
+                    #pragma omp task
+                    {
+                        process_next_task();
+                    }
+                }
+            }
         }
-        std::cout << "Processed " << tasks_processed << " tasks total" << std::endl;
+        
+        std::cout << "Processed " << tasks_processed.load() << " tasks total" << std::endl;
     }
     
     // Get queue size
     size_t queue_size() const {
+        std::lock_guard<std::mutex> lock(queue_mutex);
         return task_queue.size();
     }
     
     // Check if queue is empty
     bool is_empty() const {
+        std::lock_guard<std::mutex> lock(queue_mutex);
         return task_queue.empty();
     }
     
