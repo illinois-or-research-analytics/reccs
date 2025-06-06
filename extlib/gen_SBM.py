@@ -2,14 +2,15 @@
 This script generates a synthetic graph based on an input edge list and clustering information.
 It uses the graph-tool library to create a stochastic block model (SBM) graph.
 
-PARALLELIZED VERSION - Performance improvements:
-- Parallel processing for key computation-intensive tasks
-- Optimized data structures and algorithms
-- Efficient memory management
-- Performance monitoring and timing (with verbose flag)
+OPTIMIZED PANDAS VERSION - Performance improvements:
+- Direct pandas operations instead of loading graph into NetworkKit
+- Efficient probability matrix computation using groupby and crosstab
+- Direct degree sequence computation from edge dataframe
+- Parallel processing for remaining computation-intensive tasks
+- Optimized memory management and performance monitoring
 
 Usage:
-    python gen_SBM_parallel.py -f <edge_list_filepath> -c <clustering_filepath> -o <output_directory> [-j <num_jobs>] [-v]
+    python gen_SBM_pandas.py -f <edge_list_filepath> -c <clustering_filepath> -o <output_directory> [-j <num_jobs>] [-v]
 
 Arguments:
     -f, --filepath: Path to the input edge list file.
@@ -19,10 +20,9 @@ Arguments:
     -v, --verbose: Enable verbose output with performance statistics and progress information.
 
 Example:
-    python gen_SBM_parallel.py -f edge_list.txt -c clustering.txt -o output_directory -j 8 -v
+    python gen_SBM_pandas.py -f edge_list.txt -c clustering.txt -o output_directory -j 8 -v
 
-Original source: https://github.com/illinois-or-research-analytics/lanne2_networks/blob/main/generate_synthetic_networks/gen_SBM.py
-Original author: Lahari Anne (@lanne2)
+Optimized from: https://github.com/illinois-or-research-analytics/lanne2_networks/blob/main/generate_synthetic_networks/gen_SBM.py
 """
 
 import pandas as pd
@@ -30,10 +30,9 @@ import numpy as np
 import graph_tool.all as gt  # type: ignore[import]
 import typer
 import os
-import networkit as nk
-from scipy.sparse import lil_matrix, csr_matrix  # type: ignore[import]
+from scipy.sparse import csr_matrix  # type: ignore[import]
 import time
-from typing import Dict, List, Set, Tuple
+from typing import List, Set, Tuple
 from pathlib import Path
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -77,25 +76,31 @@ def monitor_resources(logger):
     logger(f"Memory usage: {memory_info.rss / (1024 * 1024):.2f} MB")
 
 
-def read_graph(filepath: str, logger) -> Tuple[nk.Graph, Dict]:
+def read_edge_list(filepath: str, logger) -> pd.DataFrame:
     """
-    Reads the graph from the given edge list file and returns a Networkit graph and a node mapping.
+    Reads the edge list from the given file and returns a DataFrame.
 
     Args:
         filepath: Path to the edge list file
         logger: Logger function for output
         
     Returns: 
-        nk.Graph: Networkit graph object
-        dict: Node mapping from string to integer
+        pd.DataFrame: DataFrame with columns ['source', 'target']
     """
     start_time = time.time()
-    edgelist_reader = nk.graphio.EdgeListReader("\t", 0, directed=False, continuous=False)
-    nk_graph = edgelist_reader.read(filepath)
-    node_mapping = edgelist_reader.getNodeMap()
-    logger(f"Graph reading completed in {time.time() - start_time:.2f} seconds")
+    
+    # Read the TSV file without headers
+    edges_df = pd.read_csv(filepath, sep="\t", header=None, names=["source", "target"], 
+                          dtype=str, low_memory=False)
+    
+    # Convert to string to ensure consistency
+    edges_df['source'] = edges_df['source'].astype(str)
+    edges_df['target'] = edges_df['target'].astype(str)
+    
+    logger(f"Edge list reading completed in {time.time() - start_time:.2f} seconds")
+    logger(f"Loaded {len(edges_df)} edges")
     monitor_resources(logger)
-    return nk_graph, node_mapping
+    return edges_df
 
 
 def read_clustering(filepath: str, logger) -> pd.DataFrame:
@@ -110,174 +115,117 @@ def read_clustering(filepath: str, logger) -> pd.DataFrame:
         pd.DataFrame: DataFrame containing node IDs and cluster IDs
     """
     start_time = time.time()
-    # Use low_memory=False to avoid unnecessary type checking
-    cluster_df = pd.read_csv(filepath, sep="\t", header=None, names=["node_id", "cluster_name"], low_memory=False)
+    
+    # Read clustering file
+    cluster_df = pd.read_csv(filepath, sep="\t", header=None, names=["node_id", "cluster_name"], 
+                            dtype=str, low_memory=False)
+    
+    # Convert node_id to string for consistency
+    cluster_df['node_id'] = cluster_df['node_id'].astype(str)
     
     # Use factorize which is more efficient than mapping unique values
     cluster_df['cluster_id'], _ = pd.factorize(cluster_df['cluster_name'])
     
     logger(f"Clustering reading completed in {time.time() - start_time:.2f} seconds")
+    logger(f"Loaded {len(cluster_df)} nodes with {cluster_df['cluster_id'].nunique()} clusters")
     monitor_resources(logger)
     return cluster_df[['node_id', 'cluster_id']]
 
 
-def process_edge_batch(edge_batch: List[Tuple], numerical_to_string_mapping: Dict, 
-                       node_to_cluster_dict: Dict, num_clusters: int) -> csr_matrix:
+def compute_probability_matrix(edges_df: pd.DataFrame, cluster_df: pd.DataFrame, logger) -> csr_matrix:
     """
-    Process a batch of edges to compute the inter-cluster probabilities.
+    Compute the probability matrix.
     
     Args:
-        edge_batch: List of edges to process
-        numerical_to_string_mapping: Mapping from numerical node IDs to string IDs
-        node_to_cluster_dict: Mapping from node IDs to cluster IDs
-        num_clusters: Number of clusters in the graph
-        
-    Returns:
-        A sparse matrix representing the probabilities for this batch
-    """
-    local_probs = lil_matrix((num_clusters, num_clusters), dtype=int)
-    
-    for edge in edge_batch:
-        source = numerical_to_string_mapping.get(edge[0])
-        target = numerical_to_string_mapping.get(edge[1])
-        
-        if source is not None and target is not None:
-            source_cluster_idx = node_to_cluster_dict.get(source)
-            target_cluster_idx = node_to_cluster_dict.get(target)
-            
-            if source_cluster_idx is not None and target_cluster_idx is not None:
-                local_probs[source_cluster_idx, target_cluster_idx] += 1
-                
-                # Only add the reverse edge if it's different
-                if source_cluster_idx != target_cluster_idx:
-                    local_probs[target_cluster_idx, source_cluster_idx] += 1
-    
-    return local_probs.tocsr()
-
-
-def get_probs_threaded(G_c: nk.Graph, node_mapping: Dict, cluster_df: pd.DataFrame, n_threads: int, logger) -> csr_matrix:
-    """
-    Compute the probability matrix using threads for the given graph and clustering.
-
-    Args:
-        G_c: Networkit graph object
-        node_mapping: Node mapping from string to integer
-        cluster_df: DataFrame containing node IDs and cluster IDs
-        n_threads: Number of threads to use
+        edges_df: DataFrame with edge list
+        cluster_df: DataFrame with node clustering
         logger: Logger function for output
         
     Returns:
-        csr_matrix: Sparse matrix representing the probabilities
+        csr_matrix: Sparse matrix representing inter-cluster edge counts
     """
     start_time = time.time()
     
-    # Pre-compute all mappings before the loop
-    numerical_to_string_mapping = {v: int(k) for k, v in node_mapping.items()}
+    # Join edges with clustering information
+    logger("Joining edges with cluster information...")
+    edges_with_clusters = edges_df.merge(
+        cluster_df.rename(columns={'node_id': 'source', 'cluster_id': 'source_cluster'}),
+        on='source',
+        how='inner'
+    ).merge(
+        cluster_df.rename(columns={'node_id': 'target', 'cluster_id': 'target_cluster'}),
+        on='target',
+        how='inner'
+    )
     
-    # Create node_id to cluster_id mapping more efficiently
-    node_to_cluster_dict = pd.Series(cluster_df['cluster_id'].values, 
-                                     index=cluster_df['node_id']).to_dict()
+    logger(f"Successfully joined {len(edges_with_clusters)} edges with cluster information")
     
+    # Create a crosstab to count edges between clusters
+    logger("Computing inter-cluster edge counts...")
+    cluster_counts = pd.crosstab(
+        edges_with_clusters['source_cluster'], 
+        edges_with_clusters['target_cluster']
+    )
+    
+    # Ensure the matrix is symmetric (since the graph is undirected)
+    # Add the transpose to account for both directions
+    cluster_counts_symmetric = cluster_counts + cluster_counts.T
+    
+    # Convert to sparse matrix
     num_clusters = cluster_df['cluster_id'].nunique()
     
-    # Get all edges from the graph
-    all_edges = list(G_c.iterEdges())
+    # Reindex to ensure all clusters are represented
+    all_clusters = range(num_clusters)
+    cluster_counts_full = cluster_counts_symmetric.reindex(
+        index=all_clusters, columns=all_clusters, fill_value=0
+    )
+
+    # Fill NaN values with 0
+    cluster_counts_full.fillna(0, inplace=True)
+
+    # Ensure matrix is integer type
+    cluster_counts_full = cluster_counts_full.astype(int)
     
-    # Determine batch size based on number of edges and threads
-    batch_size = max(1, len(all_edges) // (n_threads * 10))  # Create more batches than threads
-    edge_batches = [all_edges[i:i + batch_size] for i in range(0, len(all_edges), batch_size)]
-    
-    logger(f"Processing {len(all_edges)} edges in {len(edge_batches)} batches using {n_threads} threads")
-    
-    # Process edge batches using thread pool
-    results = []
-    with ThreadPoolExecutor(max_workers=n_threads) as executor:
-        futures = []
-        for batch in edge_batches:
-            future = executor.submit(
-                process_edge_batch, 
-                batch, 
-                numerical_to_string_mapping, 
-                node_to_cluster_dict, 
-                num_clusters
-            )
-            futures.append(future)
-        
-        # Show progress if verbose
-        if logger(None, return_verbose=True):
-            for future in tqdm(futures, desc="Computing probabilities"):
-                results.append(future.result())
-        else:
-            for future in futures:
-                results.append(future.result())
-    
-    # Combine results
-    probs = results[0]
-    for res in results[1:]:
-        probs = probs + res
+    # Convert to sparse matrix
+    probs_matrix = csr_matrix(cluster_counts_full.values)
     
     logger(f"Probability matrix computation completed in {time.time() - start_time:.2f} seconds")
+    logger(f"Matrix shape: {probs_matrix.shape}, Non-zero entries: {probs_matrix.nnz}")
     monitor_resources(logger)
-    return probs
+    return probs_matrix
 
 
-def compute_node_degree(node_id: str, node_mapping: Dict, G_c: nk.Graph) -> int:
+def compute_degree_sequence(edges_df: pd.DataFrame, cluster_df: pd.DataFrame, logger) -> List[int]:
     """
-    Compute the degree of a single node.
+    Compute the degree sequence.
     
     Args:
-        node_id: String identifier of the node
-        node_mapping: Mapping from string node IDs to numerical IDs
-        G_c: Networkit graph object
-        
-    Returns:
-        Degree of the node
-    """
-    node_idx = node_mapping.get(node_id)
-    if node_idx is not None:
-        return G_c.degree(node_idx)
-    return 0
-
-
-def get_degree_sequence_threaded(cluster_df: pd.DataFrame, G_c: nk.Graph, 
-                                node_mapping: Dict, n_threads: int, logger) -> List[int]:
-    """
-    Compute the degree sequence using threads.
-    
-    Args:
-        cluster_df: DataFrame containing node IDs and cluster IDs
-        G_c: Networkit graph object
-        node_mapping: Mapping from string node IDs to numerical IDs
-        n_threads: Number of threads to use
+        edges_df: DataFrame with edge list
+        cluster_df: DataFrame with node clustering
         logger: Logger function for output
         
     Returns:
-        List of node degrees
+        List of node degrees in the same order as cluster_df
     """
     start_time = time.time()
     
-    # Pre-convert all node_ids to strings once
-    node_ids = cluster_df['node_id'].astype(str).tolist()
+    # Combine source and target nodes to get all node occurrences
+    all_nodes = pd.concat([
+        edges_df['source'].rename('node_id'),
+        edges_df['target'].rename('node_id')
+    ])
     
-    # Compute degrees using thread pool
-    results = []
-    with ThreadPoolExecutor(max_workers=n_threads) as executor:
-        futures = {}
-        for node_id in node_ids:
-            future = executor.submit(compute_node_degree, node_id, node_mapping, G_c)
-            futures[future] = node_id
-        
-        # Show progress if verbose
-        if logger(None, return_verbose=True):
-            for future in tqdm(futures, desc="Computing degrees"):
-                results.append(future.result())
-        else:
-            for future in futures:
-                results.append(future.result())
+    # Count occurrences (degrees)
+    degree_counts = all_nodes.value_counts().to_dict()
+    
+    # Map degrees to nodes in cluster_df order, defaulting to 0 for isolated nodes
+    degree_sequence = [degree_counts.get(node_id, 0) for node_id in cluster_df['node_id']]
     
     logger(f"Degree sequence computation completed in {time.time() - start_time:.2f} seconds")
+    logger(f"Computed degrees for {len(degree_sequence)} nodes")
+    logger(f"Degree range: {min(degree_sequence)} to {max(degree_sequence)}")
     monitor_resources(logger)
-    return results
+    return degree_sequence
 
 
 def process_edge_subset(edges: List[Tuple], node_idx_set: np.ndarray) -> Set[Tuple[int, int]]:
@@ -452,7 +400,7 @@ def main(
     if n_threads <= 0:
         n_threads = os.cpu_count() or 4
         
-    logger(f"Starting SBM graph generation with {n_threads} threads")
+    logger(f"Starting optimized SBM graph generation with {n_threads} threads")
     monitor_resources(logger)
     
     # Use pathlib for more robust path handling
@@ -464,14 +412,14 @@ def main(
 
     logger(f"Processing input files: {edge_input} and {cluster_input}")
     
-    # Read the graph and clustering
-    G, node_mapping = read_graph(edge_input, logger)
+    # Read the edge list and clustering using pandas
+    edges_df = read_edge_list(edge_input, logger)
     cluster_df = read_clustering(cluster_input, logger)
 
-    # Get the inter-cluster probabilities and degree sequence using threads
-    probs = get_probs_threaded(G, node_mapping, cluster_df, n_threads, logger)
+    # Compute the inter-cluster probabilities and degree sequence
+    probs = compute_probability_matrix(edges_df, cluster_df, logger)
     cluster_assignment = cluster_df['cluster_id'].to_numpy()
-    out_deg_seq = get_degree_sequence_threaded(cluster_df, G, node_mapping, n_threads, logger)
+    out_deg_seq = compute_degree_sequence(edges_df, cluster_df, logger)
 
     # Generate the synthetic graph
     sbm_start_time = time.time()
