@@ -33,6 +33,8 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm  # For progress bars
 import psutil  # type: ignore[import]
 import queue
+from scipy.sparse import dok_matrix # type: ignore[import]
+from collections import Counter
 
 
 def create_logger(verbose: bool):
@@ -156,32 +158,23 @@ def compute_probability_matrix(edges_df: pd.DataFrame, cluster_df: pd.DataFrame,
     
     # Create a crosstab to count edges between clusters
     logger("Computing inter-cluster edge counts...")
-    cluster_counts = pd.crosstab(
-        edges_with_clusters['source_cluster'], 
-        edges_with_clusters['target_cluster']
-    )
-    
-    # Ensure the matrix is symmetric (since the graph is undirected)
-    # Add the transpose to account for both directions
-    cluster_counts_symmetric = cluster_counts + cluster_counts.T
-    
-    # Convert to sparse matrix
+    # More efficient: build dok_matrix directly from edge pairs
     num_clusters = cluster_df['cluster_id'].nunique()
-    
-    # Reindex to ensure all clusters are represented
-    all_clusters = range(num_clusters)
-    cluster_counts_full = cluster_counts_symmetric.reindex(
-        index=all_clusters, columns=all_clusters, fill_value=0
-    )
+    cluster_counts_dok = dok_matrix((num_clusters, num_clusters), dtype=int)
 
-    # Fill NaN values with 0
-    cluster_counts_full.fillna(0, inplace=True)
+    # Count cluster pairs directly
+    cluster_pairs = list(zip(edges_with_clusters['source_cluster'], 
+                            edges_with_clusters['target_cluster']))
+    pair_counts = Counter(cluster_pairs)
 
-    # Ensure matrix is integer type
-    cluster_counts_full = cluster_counts_full.astype(int)
-    
-    # Convert to sparse matrix
-    probs_matrix = csr_matrix(cluster_counts_full.values)
+    # Populate dok_matrix
+    for (i, j), count in pair_counts.items():
+        cluster_counts_dok[i, j] += count
+        if i != j:  # Add symmetric entry for undirected graph
+            cluster_counts_dok[j, i] += count
+
+    # Convert to CSR for final operations
+    probs_matrix = cluster_counts_dok.tocsr()
     
     logger(f"Probability matrix computation completed in {time.time() - start_time:.2f} seconds")
     logger(f"Matrix shape: {probs_matrix.shape}, Non-zero entries: {probs_matrix.nnz}")
@@ -437,4 +430,3 @@ def main(
 
 if __name__ == "__main__":
     typer.run(main)
-    
