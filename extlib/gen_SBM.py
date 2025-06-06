@@ -2,13 +2,6 @@
 This script generates a synthetic graph based on an input edge list and clustering information.
 It uses the graph-tool library to create a stochastic block model (SBM) graph.
 
-OPTIMIZED PANDAS VERSION - Performance improvements:
-- Direct pandas operations instead of loading graph into NetworkKit
-- Efficient probability matrix computation using groupby and crosstab
-- Direct degree sequence computation from edge dataframe
-- Parallel processing for remaining computation-intensive tasks
-- Optimized memory management and performance monitoring
-
 Usage:
     python gen_SBM_pandas.py -f <edge_list_filepath> -c <clustering_filepath> -o <output_directory> [-j <num_jobs>] [-v]
 
@@ -20,9 +13,10 @@ Arguments:
     -v, --verbose: Enable verbose output with performance statistics and progress information.
 
 Example:
-    python gen_SBM_pandas.py -f edge_list.txt -c clustering.txt -o output_directory -j 8 -v
+    python gen_SBM.py -f edge_list.txt -c clustering.txt -o output_directory -j 8 -v
 
-Optimized from: https://github.com/illinois-or-research-analytics/lanne2_networks/blob/main/generate_synthetic_networks/gen_SBM.py
+Original Author: Lahari Anne
+Modified by: Vikram Ramavarapu + Claude
 """
 
 import pandas as pd
