@@ -24,6 +24,7 @@ void print_usage(const char* program_name) {
     std::cerr << "  -t <num_threads>  Number of threads to use (default: hardware concurrency)" << std::endl;
     std::cerr << "  -v                Verbose mode: print detailed progress information" << std::endl;
     std::cerr << "  -c <clusters.tsv> Load clusters from TSV file" << std::endl;
+    std::cerr << "  -o <output_dir>   Output tsv edgelist with added edges (default: 'output')" << std::endl;
 }
 
 int main(int argc, char** argv) {
@@ -35,6 +36,7 @@ int main(int argc, char** argv) {
     // Parse command line arguments
     std::string graph_filename;
     std::string cluster_filename;
+    std::string output_file = "output.tsv"; // Default output file
     int num_threads = std::thread::hardware_concurrency();
     bool verbose = false;
     
@@ -50,6 +52,12 @@ int main(int argc, char** argv) {
             num_threads = std::stoi(argv[++i]);
         } else if (arg == "-c" && i + 1 < argc) {
             cluster_filename = argv[++i];
+        } else if (arg == "-o" && i + 1 < argc) {
+            // Output tsv file for added edges
+            output_file = argv[++i];
+        } else if (arg == "-h" || arg == "--help") {
+            print_usage(argv[0]);
+            return 0;
         } else {
             std::cerr << "Unknown option: " << arg << std::endl;
             print_usage(argv[0]);
@@ -174,14 +182,30 @@ int main(int argc, char** argv) {
         std::cout << "Processed " << completed_subgraphs.size() << " subgraphs." << std::endl;
     }
 
-    // Output the results
-    std::string output_dir = temp_dir + "/added_edges.tsv";
+    // Output the added edges to a TSV file
+    std::string added_edges_path = temp_dir + "/added_edges.tsv";
     auto newly_added_edges = EdgeExtractor::find_newly_added_edges(
         clustered_sbm_graph, completed_subgraphs);
-    EdgeExtractor::write_edges_to_tsv_no_header(newly_added_edges, output_dir);
+    EdgeExtractor::write_edges_to_tsv_no_header(newly_added_edges, added_edges_path);
 
     if (verbose) {
-        std::cout << "Wrote newly added edges to: " << output_dir << std::endl;
+        std::cout << "Wrote newly added edges to: " << added_edges_path << std::endl;
+    }
+
+    std::string unclustered_sbm_graph_path = temp_dir + "/unclustered_sbm/syn_sbm.tsv";
+
+    // Concatenate the clustered and unclustered SBM graphs, and the added edges
+    std::ofstream output_stream(output_file);
+
+    // Just dump all files into output
+    for (const std::string& file : {clustered_sbm_graph_path, unclustered_sbm_graph_path, added_edges_path}) {
+        std::ifstream in(file);
+        output_stream << in.rdbuf();
+    }
+
+    if (verbose) {
+        std::cout << "Concatenated clustered and unclustered SBM graphs, and added edges into: " 
+                  << output_file << std::endl;
     }
 
     if (verbose) {
