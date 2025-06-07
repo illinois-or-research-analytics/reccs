@@ -33,7 +33,7 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm  # For progress bars
 import psutil  # type: ignore[import]
 import queue
-from scipy.sparse import dok_matrix # type: ignore[import]
+from scipy.sparse import dok_matrix, coo_matrix # type: ignore[import]
 from collections import Counter
 
 
@@ -127,6 +127,48 @@ def read_clustering(filepath: str, logger) -> pd.DataFrame:
     monitor_resources(logger)
     return cluster_df[['node_id', 'cluster_id']]
 
+# Split pair_counts into chunks
+def chunk_dict(d, n_chunks):
+    items = list(d.items())
+    chunk_size = len(items) // n_chunks + 1
+    return [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
+
+def build_coo_parallel(pair_counts, num_clusters, n_threads):
+    """Parallel COO construction"""
+    
+    def process_chunk(chunk_pairs):
+        local_rows, local_cols, local_data = [], [], []
+        
+        for (i, j), count in chunk_pairs:
+            local_rows.extend([i, j])
+            local_cols.extend([j, i])
+            local_data.extend([count, count])
+        
+        return local_rows, local_cols, local_data
+    
+    # Process chunks in parallel
+    chunks = chunk_dict(pair_counts, n_threads)
+    with ThreadPoolExecutor(max_workers=n_threads) as executor:
+        results = list(executor.map(process_chunk, chunks))
+    
+    # Combine results
+    all_rows = []
+    all_cols = []
+    all_data = []
+    
+    for rows, cols, data in results:
+        all_rows.extend(rows)
+        all_cols.extend(cols)
+        all_data.extend(data)
+    
+    # Single COO -> CSR conversion
+    coo = coo_matrix(
+        (all_data, (all_rows, all_cols)),
+        shape=(num_clusters, num_clusters),
+        dtype=int
+    )
+    
+    return coo.tocsr()
 
 def compute_probability_matrix(edges_df: pd.DataFrame, cluster_df: pd.DataFrame, logger) -> csr_matrix:
     """
@@ -158,23 +200,16 @@ def compute_probability_matrix(edges_df: pd.DataFrame, cluster_df: pd.DataFrame,
     
     # Create a crosstab to count edges between clusters
     logger("Computing inter-cluster edge counts...")
-    # More efficient: build dok_matrix directly from edge pairs
+
+    # Count the numbber of cluster pairs
     num_clusters = cluster_df['cluster_id'].nunique()
-    cluster_counts_dok = dok_matrix((num_clusters, num_clusters), dtype=int)
 
     # Count cluster pairs directly
     cluster_pairs = list(zip(edges_with_clusters['source_cluster'], 
                             edges_with_clusters['target_cluster']))
     pair_counts = Counter(cluster_pairs)
 
-    # Populate dok_matrix
-    for (i, j), count in pair_counts.items():
-        cluster_counts_dok[i, j] += count
-        if i != j:  # Add symmetric entry for undirected graph
-            cluster_counts_dok[j, i] += count
-
-    # Convert to CSR for final operations
-    probs_matrix = cluster_counts_dok.tocsr()
+    probs_matrix = build_coo_parallel(pair_counts, num_clusters, n_threads=os.cpu_count())
     
     logger(f"Probability matrix computation completed in {time.time() - start_time:.2f} seconds")
     logger(f"Matrix shape: {probs_matrix.shape}, Non-zero entries: {probs_matrix.nnz}")
@@ -418,6 +453,9 @@ def main(
     # Get the edges of the generated graph using threads
     node_idx_set = cluster_df['node_id'].to_numpy()
     N_edge_list = extract_edges_threaded(N, node_idx_set, n_threads, logger)
+
+    # Remove self-loops if any
+    N_edge_list = {edge for edge in N_edge_list if edge[0] != edge[1]}
 
     # Save the generated graph edges to a file
     save_generated_graph(N_edge_list, str(out_edge_file), n_threads, logger)
