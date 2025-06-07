@@ -13,6 +13,7 @@
 #include "../lib/io/cluster_io.h"
 #include "../lib/io/requirements_io.h"
 #include "../lib/utils/orchestrator.h"
+#include "../lib/utils/edge_extractor.h"
 #include "../lib/algorithm/enforce_degree_conn.h"
 
 namespace fs = std::filesystem;
@@ -165,6 +166,22 @@ int main(int argc, char** argv) {
 
     if (verbose) {
         std::cout << "Initialized task queue with " << task_queue.queue_size() << " tasks." << std::endl;
+    }
+
+    // Retrieve completed subgraphs
+    auto completed_subgraphs = task_queue.get_completed_subgraphs();
+    if (verbose) {
+        std::cout << "Processed " << completed_subgraphs.size() << " subgraphs." << std::endl;
+    }
+
+    // Output the results
+    std::string output_dir = temp_dir + "/added_edges.tsv";
+    auto newly_added_edges = EdgeExtractor::find_newly_added_edges(
+        clustered_sbm_graph, completed_subgraphs);
+    EdgeExtractor::write_edges_to_tsv_no_header(newly_added_edges, output_dir);
+
+    if (verbose) {
+        std::cout << "Wrote newly added edges to: " << output_dir << std::endl;
     }
 
     if (verbose) {
