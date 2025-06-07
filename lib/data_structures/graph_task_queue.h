@@ -49,6 +49,10 @@ private:
     mutable std::mutex queue_mutex;  // Protects the queue
     std::atomic<size_t> tasks_processed{0};
     std::atomic<size_t> total_tasks_created{0};
+
+    // Store completed subgraphs for post-processing
+    mutable std::mutex completed_subgraphs_mutex;
+    std::vector<std::shared_ptr<Graph>> completed_subgraphs;
     
     // Task functions
     std::function<void(Graph&, uint32_t)> connectivity_enforce_fn;
@@ -278,6 +282,13 @@ public:
                 if (deg_seq_matching_fn) {
                     deg_seq_matching_fn(*task.subgraph);
                 }
+
+                // Store completed subgraph
+                {
+                    std::lock_guard<std::mutex> lock(completed_subgraphs_mutex);
+                    completed_subgraphs.push_back(task.subgraph);
+                }
+
                 // Final task - don't re-queue
                 std::cout << "Completed all tasks for cluster " << task.cluster_id << std::endl;
                 break;
@@ -331,6 +342,18 @@ public:
             case TaskType::DEG_SEQ_MATCHING: return "deg_seq_matching";
             default: return "unknown";
         }
+    }
+
+    // Clear completed subgraphs storage
+    void clear_completed_subgraphs() {
+        std::lock_guard<std::mutex> lock(completed_subgraphs_mutex);
+        completed_subgraphs.clear();
+    }
+    
+    // Get access to completed subgraphs for post-processing
+    std::vector<std::shared_ptr<Graph>> get_completed_subgraphs() const {
+        std::lock_guard<std::mutex> lock(completed_subgraphs_mutex);
+        return completed_subgraphs;
     }
 };
 
