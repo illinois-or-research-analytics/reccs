@@ -23,6 +23,7 @@ struct ClusteringParseResult {
 };
 
 // Parse a range of the file in parallel
+// Fixed version of parse_clustering_chunk
 ClusteringParseResult parse_clustering_chunk(const char* data, size_t begin, size_t end, 
                                              std::atomic<size_t>& processed_bytes, 
                                              size_t file_size, bool verbose, int thread_id) {
@@ -37,30 +38,95 @@ ClusteringParseResult parse_clustering_chunk(const char* data, size_t begin, siz
         }
     }
     
+    // Skip header line if we're at the beginning of the file
+    if (begin == 0) {
+        // Skip first line (header)
+        while (ptr < chunk_end && *ptr != '\n') ptr++;
+        if (ptr < chunk_end) ptr++; // Skip newline
+    }
+    
     // Process each line in the chunk
     while (ptr < chunk_end) {
-        // Parse node ID
-        uint64_t original_node_id = 0;
-        while (ptr < chunk_end && *ptr >= '0' && *ptr <= '9') {
-            original_node_id = original_node_id * 10 + (*ptr - '0');
+        // Skip empty lines and whitespace
+        while (ptr < chunk_end && (*ptr == ' ' || *ptr == '\t' || *ptr == '\r' || *ptr == '\n')) {
             ptr++;
         }
         
-        // Skip tab
-        if (ptr < chunk_end && *ptr == '\t') ptr++;
+        if (ptr >= chunk_end) break;
+        
+        // Parse node ID - check if we actually have digits
+        const char* node_start = ptr;
+        uint64_t original_node_id = 0;
+        bool has_digits = false;
+        
+        while (ptr < chunk_end && *ptr >= '0' && *ptr <= '9') {
+            original_node_id = original_node_id * 10 + (*ptr - '0');
+            ptr++;
+            has_digits = true;
+        }
+        
+        // Validation: Must have parsed at least one digit and not overflow
+        if (!has_digits) {
+            // Skip this malformed line
+            while (ptr < chunk_end && *ptr != '\n') ptr++;
+            if (ptr < chunk_end) ptr++;
+            continue;
+        }
+        
+        // Check for potential overflow (node_id became smaller after adding digits)
+        if (ptr - node_start > 19) { // uint64_t max is ~20 digits
+            // Potential overflow, skip this line
+            while (ptr < chunk_end && *ptr != '\n') ptr++;
+            if (ptr < chunk_end) ptr++;
+            continue;
+        }
+        
+        // Must have a tab after node ID
+        if (ptr >= chunk_end || *ptr != '\t') {
+            // Malformed line, skip it
+            while (ptr < chunk_end && *ptr != '\n') ptr++;
+            if (ptr < chunk_end) ptr++;
+            continue;
+        }
+        
+        ptr++; // Skip tab
         
         // Parse cluster ID as string
+        const char* cluster_start = ptr;
         std::string cluster_id;
-        while (ptr < chunk_end && *ptr != '\n' && *ptr != '\r') {
+        
+        while (ptr < chunk_end && *ptr != '\n' && *ptr != '\r' && *ptr != '\t') {
             cluster_id.push_back(*ptr);
             ptr++;
         }
         
-        // Skip to next line
+        // Trim trailing whitespace from cluster_id
+        while (!cluster_id.empty() && (cluster_id.back() == ' ' || cluster_id.back() == '\t')) {
+            cluster_id.pop_back();
+        }
+        
+        // Validation: cluster_id must not be empty
+        if (cluster_id.empty()) {
+            // Skip this malformed line
+            while (ptr < chunk_end && *ptr != '\n') ptr++;
+            if (ptr < chunk_end) ptr++;
+            continue;
+        }
+        
+        // Skip to end of line (handle both \r\n and \n)
         while (ptr < chunk_end && *ptr != '\n') ptr++;
         if (ptr < chunk_end) ptr++; // Skip newline
         
-        // Add to result
+        // Validation: Check for reasonable node ID values
+        if (original_node_id == 0) {
+            if (verbose) {
+                std::cerr << "Warning: Found node_id = 0 in cluster " << cluster_id << std::endl;
+            }
+            // Depending on your data, you might want to skip node_id = 0
+            // continue;
+        }
+        
+        // Add to result only if all validations pass
         result.cluster_original_nodes[cluster_id].insert(original_node_id);
     }
     
