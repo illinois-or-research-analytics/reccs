@@ -33,7 +33,7 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm  # For progress bars
 import psutil  # type: ignore[import]
 import queue
-from scipy.sparse import dok_matrix, coo_matrix # type: ignore[import]
+from scipy.sparse import coo_matrix # type: ignore[import]
 from collections import Counter
 
 
