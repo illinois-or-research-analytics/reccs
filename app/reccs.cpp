@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <thread>
 #include <unordered_set>
+#include <nlohmann/json.hpp>
 #include "../lib/data_structures/graph.h"
 #include "../lib/data_structures/clustering.h"
 #include "../lib/data_structures/graph_task_queue.h"
@@ -17,6 +18,7 @@
 #include "../lib/algorithm/enforce_degree_conn.h"
 
 namespace fs = std::filesystem;
+using json = nlohmann::json;
 
 void print_usage(const char* program_name) {
     std::cerr << "Usage: " << program_name << " <edgelist.tsv> [options]" << std::endl;

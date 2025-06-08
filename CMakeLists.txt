@@ -10,6 +10,9 @@ find_package(OpenMP REQUIRED)
 # Add the library directory
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/lib)
 
+# Add nlohmann/json
+add_subdirectory(extlib/json)
+
 # Add the executable
 add_executable(reccs app/reccs.cpp)
 
@@ -17,7 +20,7 @@ add_executable(reccs app/reccs.cpp)
 # add_executable(loader_test tests/loader_test.cpp)
 
 # Link with OpenMP
-target_link_libraries(reccs PUBLIC OpenMP::OpenMP_CXX)
+target_link_libraries(reccs PUBLIC OpenMP::OpenMP_CXX nlohmann_json::nlohmann_json)
 # target_link_libraries(loader_test PUBLIC OpenMP::OpenMP_CXX)
 
 # Copy extlib directory to build directory
