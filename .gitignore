@@ -2,6 +2,10 @@
 start.csv
 end.csv
 
+# Stats outputs
+*_stats.csv
+*_stats_degree_sequences.json
+
 .vscode/
 
 experiments/
