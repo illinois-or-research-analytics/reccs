@@ -19,22 +19,22 @@ Original Author: Lahari Anne
 Modified by: Vikram Ramavarapu + Claude
 """
 
-import pandas as pd
-import numpy as np
-import graph_tool.all as gt  # type: ignore[import]
-import typer
 import os
-from scipy.sparse import csr_matrix  # type: ignore[import]
-import time
-from typing import List, Set, Tuple
-from pathlib import Path
-import threading
-from concurrent.futures import ThreadPoolExecutor
-from tqdm import tqdm  # For progress bars
-import psutil  # type: ignore[import]
 import queue
-from scipy.sparse import coo_matrix # type: ignore[import]
+import threading
+import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import List, Set, Tuple
+
+import graph_tool.all as gt  # type: ignore[import]
+import numpy as np
+import pandas as pd
+import psutil  # type: ignore[import]
+import typer
+from scipy.sparse import coo_matrix, csr_matrix  # type: ignore[import]
+from tqdm import tqdm  # For progress bars
 
 
 def create_logger(verbose: bool):
