@@ -121,7 +121,7 @@ int main(int argc, char** argv) {
     }
 
     // Load the clustering from the specified file
-    Clustering clustering = load_clustering(cluster_filename, clustered_sbm_graph, num_threads, verbose);
+    Clustering clustering = load_clustering(cluster_filename, clustered_sbm_graph, verbose);
 
     if (verbose) {
         std::cout << "Successfully loaded clustering with " << clustering.size() << " clusters." << std::endl;

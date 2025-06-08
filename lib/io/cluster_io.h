@@ -3,7 +3,6 @@
 
 #include <string>
 #include <vector>
-#include <thread>
 #include <atomic>
 #include <mutex>
 #include <iostream>
@@ -13,17 +12,17 @@
 #include <utility>
 #include <chrono>
 #include <iomanip>
+#include <omp.h>
 #include "../data_structures/clustering.h"
 #include "../data_structures/graph.h"
 #include "mapped_file.h"
 
-// Helper struct for parallel loading
+// Helper struct for parallel loading (simplified - no mutex needed)
 struct ClusteringParseResult {
     std::unordered_map<std::string, std::unordered_set<uint64_t>> cluster_original_nodes;
 };
 
-// Parse a range of the file in parallel
-// Fixed version of parse_clustering_chunk
+// Parse a range of the file - returns results without mutex issues
 ClusteringParseResult parse_clustering_chunk(const char* data, size_t begin, size_t end, 
                                              std::atomic<size_t>& processed_bytes, 
                                              size_t file_size, bool verbose, int thread_id) {
@@ -92,9 +91,7 @@ ClusteringParseResult parse_clustering_chunk(const char* data, size_t begin, siz
         ptr++; // Skip tab
         
         // Parse cluster ID as string
-        const char* cluster_start = ptr;
         std::string cluster_id;
-        
         while (ptr < chunk_end && *ptr != '\n' && *ptr != '\r' && *ptr != '\t') {
             cluster_id.push_back(*ptr);
             ptr++;
@@ -120,13 +117,14 @@ ClusteringParseResult parse_clustering_chunk(const char* data, size_t begin, siz
         // Validation: Check for reasonable node ID values
         if (original_node_id == 0) {
             if (verbose) {
-                std::cerr << "Warning: Found node_id = 0 in cluster " << cluster_id << std::endl;
+                #pragma omp critical(warning_output)
+                {
+                    std::cerr << "Warning: Found node_id = 0 in cluster " << cluster_id << std::endl;
+                }
             }
-            // Depending on your data, you might want to skip node_id = 0
-            // continue;
         }
         
-        // Add to result only if all validations pass
+        // Add to result (thread-local, no synchronization needed)
         result.cluster_original_nodes[cluster_id].insert(original_node_id);
     }
     
@@ -134,8 +132,11 @@ ClusteringParseResult parse_clustering_chunk(const char* data, size_t begin, siz
     if (verbose && thread_id == 0) {
         size_t current = processed_bytes.fetch_add(ptr - (data + begin));
         double progress = 100.0 * current / file_size;
-        std::cout << "\rParsing clustering file: " << std::fixed << std::setprecision(1) 
-                  << progress << "%" << std::flush;
+        #pragma omp critical(progress_output)
+        {
+            std::cout << "\rParsing clustering file: " << std::fixed << std::setprecision(1) 
+                      << progress << "%" << std::flush;
+        }
     } else {
         processed_bytes.fetch_add(ptr - (data + begin));
     }
@@ -143,9 +144,9 @@ ClusteringParseResult parse_clustering_chunk(const char* data, size_t begin, siz
     return result;
 }
 
-// Load clustering from a TSV file (node_id, cluster_id)
+// Load clustering from a TSV file using OpenMP
 Clustering load_clustering(const std::string& filename, const Graph& graph, 
-                           int num_threads = std::thread::hardware_concurrency(),
+                           int num_threads = 0, // 0 = use OpenMP default
                            bool verbose = false) {
     Clustering clustering;
     clustering.reset(graph.num_nodes);
@@ -159,37 +160,48 @@ Clustering load_clustering(const std::string& filename, const Graph& graph,
     const char* data = file.data();
     size_t file_size = file.size();
     
+    // Set number of threads
+    if (num_threads > 0) {
+        omp_set_num_threads(num_threads);
+    }
+    int actual_threads = omp_get_max_threads();
+    
     if (verbose) {
         std::cout << "Loading clustering from: " << filename << std::endl;
         std::cout << "Clustering file size: " << file_size / 1024 << " KB" << std::endl;
-        std::cout << "Using " << num_threads << " threads for parsing" << std::endl;
+        std::cout << "Using " << actual_threads << " threads for parsing" << std::endl;
     }
     
-    // Split file into chunks for parallel processing
-    std::vector<std::thread> threads;
-    std::vector<ClusteringParseResult> chunk_results(num_threads);
+    // Shared data structures for parallel processing
+    std::unordered_map<std::string, std::unordered_set<uint64_t>> all_cluster_nodes;
+    std::mutex merge_mutex;
     std::atomic<size_t> processed_bytes(0);
-    
-    size_t chunk_size = file_size / num_threads;
-    if (chunk_size == 0) chunk_size = file_size;
     
     auto start_time = std::chrono::steady_clock::now();
     
-    // Launch threads to parse the file
-    for (int i = 0; i < num_threads; i++) {
-        size_t begin = i * chunk_size;
-        size_t end = (i == num_threads - 1) ? file_size : (i + 1) * chunk_size;
+    // Parse file in parallel using OpenMP
+    #pragma omp parallel
+    {
+        int thread_id = omp_get_thread_num();
+        int num_threads_actual = omp_get_num_threads();
         
-        threads.emplace_back([&, i, begin, end]() {
-            chunk_results[i] = parse_clustering_chunk(data, begin, end, 
-                                                       processed_bytes, file_size, 
-                                                       verbose, i);
-        });
-    }
-    
-    // Wait for all threads to finish
-    for (auto& t : threads) {
-        t.join();
+        // Calculate chunk boundaries for this thread
+        size_t chunk_size = file_size / num_threads_actual;
+        size_t begin = thread_id * chunk_size;
+        size_t end = (thread_id == num_threads_actual - 1) ? file_size : (thread_id + 1) * chunk_size;
+        
+        // Parse this thread's chunk
+        ClusteringParseResult result = parse_clustering_chunk(data, begin, end, 
+                                                               processed_bytes, file_size, 
+                                                               verbose, thread_id);
+        
+        // Merge results into shared data structure
+        {
+            std::lock_guard<std::mutex> lock(merge_mutex);
+            for (const auto& [cluster_id, nodes] : result.cluster_original_nodes) {
+                all_cluster_nodes[cluster_id].insert(nodes.begin(), nodes.end());
+            }
+        }
     }
     
     if (verbose) {
@@ -198,18 +210,6 @@ Clustering load_clustering(const std::string& filename, const Graph& graph,
         auto parse_time = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - start_time);
         std::cout << "Parsing completed in " << parse_time.count() / 1000.0 << " seconds" << std::endl;
-    }
-    
-    // Merge results from all threads
-    std::unordered_map<std::string, std::unordered_set<uint64_t>> all_cluster_nodes;
-    
-    for (const auto& result : chunk_results) {
-        for (const auto& [cluster_id, nodes] : result.cluster_original_nodes) {
-            all_cluster_nodes[cluster_id].insert(nodes.begin(), nodes.end());
-        }
-    }
-    
-    if (verbose) {
         std::cout << "Found " << all_cluster_nodes.size() << " unique clusters" << std::endl;
     }
     
@@ -224,33 +224,74 @@ Clustering load_clustering(const std::string& filename, const Graph& graph,
     
     auto build_start_time = std::chrono::steady_clock::now();
     
-    for (const auto& [cluster_id, original_nodes] : all_cluster_nodes) {
-        // Add nodes to cluster
+    // Build clustering in parallel
+    std::atomic<size_t> atomic_nodes_processed(0);
+    std::atomic<size_t> atomic_nodes_found(0);
+    std::mutex clustering_mutex;
+    
+    // Convert map to vector for easier parallel iteration
+    std::vector<std::pair<std::string, std::unordered_set<uint64_t>>> cluster_vector;
+    cluster_vector.reserve(all_cluster_nodes.size());
+    for (const auto& pair : all_cluster_nodes) {
+        cluster_vector.push_back(pair);
+    }
+    
+    #pragma omp parallel for schedule(dynamic, 1)
+    for (size_t i = 0; i < cluster_vector.size(); ++i) {
+        const auto& [cluster_id, original_nodes] = cluster_vector[i];
+        
+        size_t local_processed = 0;
+        size_t local_found = 0;
+        
+        // Process nodes in this cluster
         for (uint64_t original_node_id : original_nodes) {
             auto it = graph.node_map.find(original_node_id);
             if (it != graph.node_map.end()) {
                 uint32_t node_id = it->second;
                 
-                // Assign node to cluster using the new method
-                clustering.assign_node_to_cluster(node_id, cluster_id);
-                nodes_found++;
+                // Thread-safe assignment to clustering
+                {
+                    std::lock_guard<std::mutex> lock(clustering_mutex);
+                    clustering.assign_node_to_cluster(node_id, cluster_id);
+                }
+                local_found++;
             } else {
                 if (verbose) {
-                    std::cerr << "Warning: Node " << original_node_id 
-                              << " not found in graph" << std::endl;
+                    #pragma omp critical(node_warning)
+                    {
+                        std::cerr << "Warning: Node " << original_node_id 
+                                  << " not found in graph" << std::endl;
+                    }
                 }
-                clustering.assign_missing_node_to_cluster(original_node_id, cluster_id);
+                {
+                    std::lock_guard<std::mutex> lock(clustering_mutex);
+                    clustering.assign_missing_node_to_cluster(original_node_id, cluster_id);
+                }
             }
             
-            // Progress reporting
-            nodes_processed++;
-            if (verbose && nodes_processed % 1000000 == 0) {
-                double progress = 100.0 * nodes_processed / total_nodes;
-                std::cout << "\rBuilding clustering: " << std::fixed << std::setprecision(1) 
-                          << progress << "%" << std::flush;
+            local_processed++;
+        }
+        
+        // Update atomic counters
+        atomic_nodes_processed.fetch_add(local_processed);
+        atomic_nodes_found.fetch_add(local_found);
+        
+        // Progress reporting (only from thread 0)
+        if (verbose && omp_get_thread_num() == 0) {
+            size_t current_processed = atomic_nodes_processed.load();
+            if (current_processed % 1000000 == 0 || current_processed == total_nodes) {
+                double progress = 100.0 * current_processed / total_nodes;
+                #pragma omp critical(build_progress)
+                {
+                    std::cout << "\rBuilding clustering: " << std::fixed << std::setprecision(1) 
+                              << progress << "%" << std::flush;
+                }
             }
         }
     }
+    
+    nodes_processed = atomic_nodes_processed.load();
+    nodes_found = atomic_nodes_found.load();
     
     if (verbose) {
         std::cout << std::endl; // End progress line
@@ -287,10 +328,12 @@ bool save_filtered_clustering(const std::string& filename,
         std::cout << "Saving filtered clustering to: " << filename << std::endl;
     }
 
-    size_t nodes_written = 0;
-    size_t nodes_skipped = 0;
+    std::atomic<size_t> nodes_written(0);
+    std::atomic<size_t> nodes_skipped(0);
+    std::mutex file_mutex;
 
-    // For each node in the subgraph, write its cluster assignment if it exists
+    // Parallelize the writing process
+    #pragma omp parallel for schedule(static, 1000)
     for (uint32_t new_node_id = 0; new_node_id < graph.num_nodes; ++new_node_id) {
         // Get the original node ID from the graph's ID map
         uint64_t original_node_id = graph.id_map[new_node_id];
@@ -307,9 +350,12 @@ bool save_filtered_clustering(const std::string& filename,
         if (original_internal_id == UINT32_MAX) {
             // Couldn't find the original internal ID - should not happen
             if (verbose) {
-                std::cerr << "Warning: Could not find original internal ID for node " << new_node_id << std::endl;
+                #pragma omp critical(save_warning)
+                {
+                    std::cerr << "Warning: Could not find original internal ID for node " << new_node_id << std::endl;
+                }
             }
-            nodes_skipped++;
+            nodes_skipped.fetch_add(1);
             continue;
         }
 
@@ -320,19 +366,22 @@ bool save_filtered_clustering(const std::string& filename,
             uint32_t cluster_idx = clustering.node_to_cluster_idx[original_internal_id];
             const std::string& cluster_id = clustering.get_cluster_id(cluster_idx);
 
-            // Write to file: original_node_id (from graph) and cluster_id
-            outfile << original_node_id << "\t" << cluster_id << "\n";
-            nodes_written++;
+            // Write to file with thread safety
+            {
+                std::lock_guard<std::mutex> lock(file_mutex);
+                outfile << original_node_id << "\t" << cluster_id << "\n";
+            }
+            nodes_written.fetch_add(1);
         } else {
-            nodes_skipped++;
+            nodes_skipped.fetch_add(1);
         }
     }
 
     outfile.close();
 
     if (verbose) {
-        std::cout << "Written " << nodes_written << " node-cluster assignments" << std::endl;
-        std::cout << "Skipped " << nodes_skipped << " nodes without cluster assignments" << std::endl;
+        std::cout << "Written " << nodes_written.load() << " node-cluster assignments" << std::endl;
+        std::cout << "Skipped " << nodes_skipped.load() << " nodes without cluster assignments" << std::endl;
     }
 
     return true;
