@@ -179,14 +179,14 @@ int main(int argc, char** argv) {
         },
         
         // Degree sequence matching
-        [](Graph& g) {
+        [](Graph& g, std::shared_ptr<const std::vector<uint32_t>> target_sequence) {
             std::cout << "  Matching degree sequence on graph with " 
                       << g.num_nodes << " nodes" << std::endl;
             // TODO: Implement degree sequence matching
         }
     );
 
-    task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader);
+    task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader, degseq_json);
     task_queue.process_all_tasks();
 
     if (verbose) {
