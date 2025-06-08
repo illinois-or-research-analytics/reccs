@@ -1,3 +1,7 @@
+# Santity check csvs
+start.csv
+end.csv
+
 .vscode/
 
 experiments/
