@@ -6,13 +6,13 @@
 #include <filesystem>
 #include <thread>
 #include <unordered_set>
-#include <nlohmann/json.hpp>
 #include "../lib/data_structures/graph.h"
 #include "../lib/data_structures/clustering.h"
 #include "../lib/data_structures/graph_task_queue.h"
 #include "../lib/io/graph_io.h"
 #include "../lib/io/cluster_io.h"
 #include "../lib/io/requirements_io.h"
+#include "../lib/io/degseq_io.h"
 #include "../lib/utils/orchestrator.h"
 #include "../lib/utils/edge_extractor.h"
 #include "../lib/algorithm/enforce_degree_conn.h"
@@ -139,6 +139,21 @@ int main(int argc, char** argv) {
     if (!requirements_loader.load_from_csv(requirements_filename, verbose)) {
         std::cerr << "Error: Failed to load cluster requirements from " << requirements_filename << std::endl;
         return 1;
+    }
+
+    // Load the degree sequence requirements
+    std::string degseq_filename = temp_dir + "/clustered_stats_degree_sequences.json";
+    if (verbose) {
+        std::cout << "Loading degree sequence requirements from: " << degseq_filename << std::endl;
+    }
+
+    json degseq_json = load_degseq_json(degseq_filename);
+    if (degseq_json.empty()) {
+        std::cerr << "Error: Failed to load degree sequence requirements from " << degseq_filename << std::endl;
+        return 1;
+    }
+    if (verbose) {
+        std::cout << "Successfully loaded degree sequence requirements." << std::endl;
     }
 
     // Print loaded requirements statistics
