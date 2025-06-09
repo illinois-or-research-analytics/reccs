@@ -1,3 +1,5 @@
+eval_dir/
+
 # Santity check csvs
 start.csv
 end.csv
