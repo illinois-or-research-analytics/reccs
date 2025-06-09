@@ -1,7 +1,7 @@
 import json
 import typer
 import pandas as pd
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt # type: ignore
 import numpy as np
 
 def get_min_degree_mapping(degseq_json):
