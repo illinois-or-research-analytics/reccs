@@ -47,6 +47,12 @@ void match_degree_sequence(
         [](const NodeDegree& a, const NodeDegree& b) {
             return a.degree < b.degree;  // For max heap, use less-than comparator
         });
+
+    // Initialize edge lookup
+    auto existing_edges = statics::compute_existing_edges(g);
+    auto edge_exists_fast = statics::create_edge_exists_checker(existing_edges);
+
+    // TODO: Implement the matching algorithm
 }
 
 #endif

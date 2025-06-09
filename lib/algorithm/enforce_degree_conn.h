@@ -65,20 +65,9 @@ void enforce_degree_and_connectivity(Graph& g, uint32_t min_degree) {
     }
     
     // Build hash set of existing edges for O(1) lookup
-    std::unordered_set<uint64_t> existing_edges;
-    for (uint32_t u = 0; u < g.num_nodes; ++u) {
-        for (uint32_t idx = g.row_ptr[u]; idx < g.row_ptr[u + 1]; ++idx) {
-            uint32_t v = g.col_idx[idx];
-            if (u < v) { // Store each edge once
-                existing_edges.insert((static_cast<uint64_t>(u) << 32) | v);
-            }
-        }
-    }
+    auto existing_edges = statics::compute_existing_edges(g);
+    auto edge_exists_fast = statics::create_edge_exists_checker(existing_edges);
     
-    auto edge_exists_fast = [&existing_edges](uint32_t u, uint32_t v) -> bool {
-        if (u > v) std::swap(u, v);
-        return existing_edges.count((static_cast<uint64_t>(u) << 32) | v) > 0;
-    };
     // Track edges to add (as pairs where first < second)
     std::set<std::pair<uint32_t, uint32_t>> edges_to_add;
     
