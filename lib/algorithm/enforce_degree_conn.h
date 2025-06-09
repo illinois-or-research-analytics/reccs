@@ -8,6 +8,7 @@
 #include <random>
 #include <set>
 #include "../data_structures/graph.h"
+#include "../data_structures/node_degree.h"
 
 // Find connected components using BFS
 std::vector<std::vector<uint32_t>> find_connected_components(const Graph& g) {
@@ -54,17 +55,6 @@ bool edge_exists(const Graph& g, uint32_t u, uint32_t v) {
     }
     return false;
 }
-
-// Node with degree for heap
-struct NodeDegree {
-    uint32_t node;
-    uint32_t degree;
-    
-    // For min heap
-    bool operator>(const NodeDegree& other) const {
-        return degree > other.degree;
-    }
-};
 
 // Combined degree enforcement and connectivity using min heap strategy
 void enforce_degree_and_connectivity(Graph& g, uint32_t min_degree) {
