@@ -1,7 +1,8 @@
 import json
 import typer
 import pandas as pd
-
+import matplotlib.pyplot as plt
+import numpy as np
 
 def get_min_degree_mapping(degseq_json):
     """
@@ -15,25 +16,28 @@ def get_min_degree_mapping(degseq_json):
             min_degree_mapping[cluster_id] = None  # Handle empty degree lists
     return min_degree_mapping
 
-def verify_no_degree_deficit(output_degseq, reference_degseq):
+def get_degseq_euclidean_distance(cluster_id, output_degrees, reference_degrees):
     """
-    Verifies that the output degree sequence does not have a deficit compared to the reference degree sequence.
+    Calculates the Euclidean distance between the output and reference degree sequences for a given cluster.
     """
-    output_degseq = list(sorted(output_degseq))
-    reference_degseq = list(sorted(reference_degseq))
+    if cluster_id not in output_degrees or cluster_id not in reference_degrees:
+        return None  # Cluster ID not found in either sequence
 
-    for o, r in zip(output_degseq, reference_degseq):
-        if o < r:
-            print(f"FAIL: Degree deficit found: output {o} is less than reference {r}.")
-            return False
-    
-    return True
+    output_set = np.array(output_degrees[cluster_id])
+    reference_set = np.array(reference_degrees[cluster_id])
+
+    # Calculate the Euclidean distance
+    distance = np.sqrt(np.sum((output_set - reference_set) ** 2))
+    return distance
 
 def main(
     stats_dir: str = typer.Option(..., "--stats_output", "-s", help="Output stats filename"),
     degseq_dir: str = typer.Option(..., "--degree_sequence", "-d", help="Output degree sequence filename"),
     reference_stats_dir: str = typer.Option(..., "--reference_stats", "-rs", help="Reference stats filename"),
-    reference_degseq_dir: str = typer.Option(..., "--reference_degree_sequence", "-rd", help="Reference degree sequence filename")
+    reference_degseq_dir: str = typer.Option(..., "--reference_degree_sequence", "-rd", help="Reference degree sequence filename"),
+    sbm_stats_dir: str = typer.Option(..., "--sbm_stats", "-ss", help="SBM stats filename"),
+    sbm_degseq_dir: str = typer.Option(..., "--sbm_degree_sequence", "-sd", help="SBM degree sequence filename"),
+    plot_output_path: str = typer.Option("degree_sequence_distances_boxplot.png", "--plot_output", "-p", help="Path to save the plot output")
 ):
     """
     Checks validity of RECCS output stats
@@ -41,6 +45,7 @@ def main(
     # Load the stats file csv
     stats_df = pd.read_csv(stats_dir)
     reference_stats_df = pd.read_csv(reference_stats_dir)
+    sbm_stats_df = pd.read_csv(sbm_stats_dir)
 
     # Load the degree sequence json
     with open(degseq_dir, 'r') as f:
@@ -48,6 +53,9 @@ def main(
 
     with open(reference_degseq_dir, 'r') as f:
         reference_degseq = json.load(f)
+
+    with open(sbm_degseq_dir, 'r') as f:
+        sbm_degseq = json.load(f)
 
     # Create cluster_id : connectivity mapping from the stats dataframes
     stats_connectivity = dict(zip(stats_df['cluster'], stats_df['connectivity']))
@@ -80,17 +88,32 @@ def main(
     if not connectivity_mismatch:
         print("PASS: Minimum degree matches connectivity for all clusters!")
 
-    # Verify that the output degree sequence does not have a deficit compared to the reference degree sequence
-    for cluster_id, output_degrees in degseq.items():
-        if cluster_id in reference_degseq:
-            reference_degrees = reference_degseq[cluster_id]
-            if not verify_no_degree_deficit(output_degrees, reference_degrees):
-                print(f"FAIL: Degree deficit found for cluster {cluster_id}.")
-                return
-        else:
-            print(f"FAIL: Cluster {cluster_id} not found in reference degree sequence.")
-            return
-    print("PASS: No degree deficit found in the output degree sequence compared to the reference.")
+    # Get a histogram of degseq distances between SBM and reference, and RECCS and reference
+    sbm_distances = []
+    reccs_distances = []
+
+    for cluster_id in degseq.keys():
+        sbm_distance = get_degseq_euclidean_distance(cluster_id, sbm_degseq, reference_degseq)
+        reccs_distance = get_degseq_euclidean_distance(cluster_id, degseq, reference_degseq)
+
+        if sbm_distance is not None:
+            sbm_distances.append(sbm_distance)
+        if reccs_distance is not None:
+            reccs_distances.append(reccs_distance)
+    
+    # Plot the histograms on the same figure
+    plt.figure(figsize=(10, 6))
+    
+    # Create box plot comparing SBM and RECCS distances
+    data_to_plot = [sbm_distances, reccs_distances]
+    labels = ['SBM Distances', 'RECCS Distances']
+    
+    plt.boxplot(data_to_plot, labels=labels, showfliers=False)
+    plt.title('Comparison of Degree Sequence Distances')
+    plt.ylabel('Euclidean Distance')
+    plt.grid(True, alpha=0.3)
+    plt.savefig(plot_output_path)
 
 if __name__ == "__main__":
     typer.run(main)
+    
