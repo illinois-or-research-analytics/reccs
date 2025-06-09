@@ -48,14 +48,6 @@ uint32_t get_degree(const Graph& g, uint32_t node) {
     return g.row_ptr[node + 1] - g.row_ptr[node];
 }
 
-// Check if edge exists
-bool edge_exists(const Graph& g, uint32_t u, uint32_t v) {
-    for (uint32_t i = g.row_ptr[u]; i < g.row_ptr[u + 1]; ++i) {
-        if (g.col_idx[i] == v) return true;
-    }
-    return false;
-}
-
 // Combined degree enforcement and connectivity using min heap strategy
 void enforce_degree_and_connectivity(Graph& g, uint32_t min_degree) {
     // Check if the requirement is even possible
