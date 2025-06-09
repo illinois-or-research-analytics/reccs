@@ -53,6 +53,42 @@ void match_degree_sequence(
     auto edge_exists_fast = statics::create_edge_exists_checker(existing_edges);
 
     // TODO: Implement the matching algorithm
+    while (!degree_deficit.empty()) {
+        // Get node with highest deficit
+        std::pop_heap(degree_deficit.begin(), degree_deficit.end(), 
+            [](const NodeDegree& a, const NodeDegree& b) {
+                return a.degree < b.degree;  // For max heap, use less-than comparator
+            });
+        NodeDegree current = degree_deficit.back();
+        degree_deficit.pop_back();
+
+        if (current.degree <= 0) {
+            // No more deficits to resolve
+            break;
+        }
+
+        // Find candidates to connect with
+        for (uint32_t i = 0; i < g.num_nodes && current.degree > 0; ++i) {
+            if (i == current.node || node_degrees[i].degree >= sorted_target_degrees[i]) {
+                continue;  // Skip self and already satisfied nodes
+            }
+
+            if (!edge_exists_fast(current.node, i)) {
+                // Add edge
+                g.add_edge(current.node, i);
+                node_degrees[current.node].degree++;
+                node_degrees[i].degree++;
+                current.degree--;
+                
+                // Update deficit for the connected node
+                degree_deficit.push_back(NodeDegree{i, sorted_target_degrees[i] - node_degrees[i].degree});
+                std::push_heap(degree_deficit.begin(), degree_deficit.end(), 
+                    [](const NodeDegree& a, const NodeDegree& b) {
+                        return a.degree < b.degree;  // For max heap, use less-than comparator
+                    });
+            }
+        }
+    }
 }
 
 #endif
