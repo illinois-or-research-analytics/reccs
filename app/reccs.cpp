@@ -16,6 +16,7 @@
 #include "../lib/utils/orchestrator.h"
 #include "../lib/utils/edge_extractor.h"
 #include "../lib/algorithm/enforce_degree_conn.h"
+#include "../lib/algorithm/deg_seq_matching.h"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -180,9 +181,13 @@ int main(int argc, char** argv) {
         
         // Degree sequence matching
         [](Graph& g, std::shared_ptr<const std::vector<uint32_t>> target_sequence) {
-            std::cout << "  Matching degree sequence on graph with " 
-                      << g.num_nodes << " nodes" << std::endl;
-            // TODO: Implement degree sequence matching
+            if (target_sequence && !target_sequence->empty()) {
+                std::cout << "  Processing degree sequence matching with target sequence of size "
+                          << target_sequence->size() << std::endl;
+                match_degree_sequence(g, target_sequence);
+            } else {
+                std::cout << "  No target degree sequence provided, skipping matching." << std::endl;
+            }
         }
     );
 

@@ -55,6 +55,12 @@ struct Graph {
         // Update edge count
         num_edges++;
     }
+
+    // Get degree of a node
+    uint32_t get_degree(uint32_t node) const {
+        if (node >= num_nodes) return 0;
+        return row_ptr[node + 1] - row_ptr[node];
+    }
 };
 
 // Sort adjacency lists in parallel
