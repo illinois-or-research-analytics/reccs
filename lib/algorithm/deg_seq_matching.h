@@ -87,8 +87,8 @@ void match_degree_sequence(
     }
 
     // Add all edges in batch
-    std::vector<std::pair<uint32_t, uint32_t>> edges_to_add_vec(edges_to_add.begin(), edges_to_add.end());
-    add_edges_batch(g, edges_to_add_vec);
+    std::vector<std::pair<uint32_t, uint32_t>> edges_vector(edges_to_add.begin(), edges_to_add.end());
+    add_edges_batch(g, edges_vector);
     std::cout << "Degree sequence matching completed. Added " 
               << edges_to_add.size() << " edges." << std::endl;
 }
