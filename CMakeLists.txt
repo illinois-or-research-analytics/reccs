@@ -10,6 +10,13 @@ find_package(OpenMP REQUIRED)
 # Add the library directory
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/lib)
 
+include_directories(
+    extlib/VieCut/app 
+    extlib/VieCut/lib             
+    extlib/VieCut/extlib/growt
+    extlib/VieCut/extlib/tlx
+)
+
 # Add nlohmann/json
 add_subdirectory(extlib/json)
 

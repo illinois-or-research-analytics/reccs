@@ -9,7 +9,7 @@
 #include "../lib/data_structures/graph.h"
 #include "../lib/data_structures/clustering.h"
 #include "../lib/data_structures/graph_task_queue.h"
-#include "../lib/io/graph_io.h"
+#include "../lib/io/g_io.h"
 #include "../lib/io/cluster_io.h"
 #include "../lib/io/requirements_io.h"
 #include "../lib/io/degseq_io.h"
