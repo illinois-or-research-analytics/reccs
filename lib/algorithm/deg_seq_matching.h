@@ -4,6 +4,7 @@
 #include <vector>
 #include <memory>
 #include <iostream>
+#include <queue>
 #include "../data_structures/graph.h"
 #include "../data_structures/node_degree.h"
 
@@ -43,24 +44,20 @@ void match_degree_sequence(
     }
     
     // Create max heap based on degree deficit (higher deficit = higher priority)
-    std::make_heap(degree_deficit.begin(), degree_deficit.end(), 
-        [](const NodeDegree& a, const NodeDegree& b) {
-            return a.degree < b.degree;  // For max heap, use less-than comparator
-        });
+    std::priority_queue<NodeDegree, std::vector<NodeDegree>, std::less<NodeDegree>> deficit_heap(degree_deficit.begin(), degree_deficit.end());
 
     // Initialize edge lookup
     auto existing_edges = statics::compute_existing_edges(g);
     auto edge_exists_fast = statics::create_edge_exists_checker(existing_edges);
 
-    // TODO: Implement the matching algorithm
-    while (!degree_deficit.empty()) {
+    // Track edges to add (as pairs where first < second)
+    std::set<std::pair<uint32_t, uint32_t>> edges_to_add;
+
+    // Iteratively resolve deficits
+    while (!deficit_heap.empty()) {
         // Get node with highest deficit
-        std::pop_heap(degree_deficit.begin(), degree_deficit.end(), 
-            [](const NodeDegree& a, const NodeDegree& b) {
-                return a.degree < b.degree;  // For max heap, use less-than comparator
-            });
-        NodeDegree current = degree_deficit.back();
-        degree_deficit.pop_back();
+        NodeDegree current = deficit_heap.top();
+        deficit_heap.pop();
 
         if (current.degree <= 0) {
             // No more deficits to resolve
@@ -74,21 +71,26 @@ void match_degree_sequence(
             }
 
             if (!edge_exists_fast(current.node, i)) {
-                // Add edge
-                g.add_edge(current.node, i);
+                // Add edge to set
+                uint32_t u = std::min(current.node, i);
+                uint32_t v = std::max(current.node, i);
+                edges_to_add.insert({u, v});
+                
                 node_degrees[current.node].degree++;
                 node_degrees[i].degree++;
                 current.degree--;
                 
                 // Update deficit for the connected node
-                degree_deficit.push_back(NodeDegree{i, sorted_target_degrees[i] - node_degrees[i].degree});
-                std::push_heap(degree_deficit.begin(), degree_deficit.end(), 
-                    [](const NodeDegree& a, const NodeDegree& b) {
-                        return a.degree < b.degree;  // For max heap, use less-than comparator
-                    });
+                deficit_heap.push(NodeDegree{i, sorted_target_degrees[i] - node_degrees[i].degree});
             }
         }
     }
+
+    // Add all edges in batch
+    std::vector<std::pair<uint32_t, uint32_t>> edges_to_add_vec(edges_to_add.begin(), edges_to_add.end());
+    add_edges_batch(g, edges_to_add_vec);
+    std::cout << "Degree sequence matching completed. Added " 
+              << edges_to_add.size() << " edges." << std::endl;
 }
 
 #endif
