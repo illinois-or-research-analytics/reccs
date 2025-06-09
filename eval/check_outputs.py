@@ -108,7 +108,7 @@ def main(
     data_to_plot = [sbm_distances, reccs_distances]
     labels = ['SBM Distances', 'RECCS Distances']
     
-    plt.boxplot(data_to_plot, labels=labels, showfliers=False)
+    plt.boxplot(data_to_plot, labels=labels)
     plt.title('Comparison of Degree Sequence Distances')
     plt.ylabel('Euclidean Distance')
     plt.grid(True, alpha=0.3)
