@@ -1,3 +1,6 @@
+#ifndef ENFORCE_MINCUT_H
+#define ENFORCE_MINCUT_H
+
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
@@ -6,16 +9,27 @@
 #include <vector>
 #include <tuple>
 
-// Viecut includes
-#include "io/graph_io.h"
-#include "algorithms/global_mincut/algorithms.h"
-#include "algorithms/global_mincut/minimum_cut.h"
-#include "common/configuration.h"
-#include "common/definitions.h"
-#include "data_structure/graph_access.h"
-#include "data_structure/mutable_graph.h"
-#include "tlx/cmdline_parser.hpp"
-#include "tlx/logger.hpp"
-#include "tools/random_functions.h"
-#include "tools/string.h"
-#include "tools/timer.h"
+void enforce_mincut(const Graph& g, uint32_t min_cut_size) {
+    // Get minimum cut using the configured algorithm
+    MincutResult result = compute_mincut(g);
+    if (result.get_light_partition().empty() || result.get_heavy_partition().empty()) {
+        std::cerr << "Error: Mincut algorithm returned empty partitions." << std::endl;
+        return;
+    }
+    
+    if (result.get_cut_size() < min_cut_size) {
+        // Output the partitions
+        std::cerr << "Light partition: ";
+        for (uint32_t node : result.get_light_partition()) {
+            std::cerr << node << " ";
+        }
+        std::cerr << "\nHeavy partition: ";
+        for (uint32_t node : result.get_heavy_partition()) {
+            std::cerr << node << " ";
+        }
+        std::cerr << "\nCut size: " << result.get_cut_size() << std::endl;
+        std::cerr << "Required minimum cut size: " << min_cut_size << std::endl;
+    }
+}
+
+#endif // ENFORCE_MINCUT_H

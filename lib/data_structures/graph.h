@@ -10,6 +10,26 @@
 #include <atomic>
 #include <omp.h>
 
+#include "mincut_result.h"
+
+// Viecut includes
+#include "io/graph_io.h"
+#include "algorithms/global_mincut/noi_minimum_cut.h"
+#include "common/configuration.h"
+#include "common/definitions.h"
+#include "data_structure/graph_access.h"
+#include "data_structure/mutable_graph.h"
+#include "tlx/cmdline_parser.hpp"
+#include "tlx/logger.hpp"
+#include "tools/random_functions.h"
+#include "tools/string.h"
+#include "tools/timer.h"
+
+
+// typedef graph_access graph_type;
+typedef mutable_graph graph_type;
+typedef std::shared_ptr<graph_type> GraphPtr;
+
 // CSR representation for undirected graph
 struct Graph {
     std::vector<uint32_t> row_ptr;  // Offsets for each node's edge list
@@ -213,6 +233,99 @@ void add_edges_batch(Graph& g, const std::vector<std::pair<uint32_t, uint32_t>>&
     g.num_edges += new_edges_added;
     
     std::cout << "Batch added " << new_edges_added << " new edges" << std::endl;
+}
+
+std::vector<std::tuple<uint32_t, uint32_t>> get_edges(const Graph& g) {
+    std::vector<std::tuple<uint32_t, uint32_t>> edges;
+    for (uint32_t u = 0; u < g.num_nodes; ++u) {
+        for (uint32_t idx = g.row_ptr[u]; idx < g.row_ptr[u + 1]; ++idx) {
+            uint32_t v = g.col_idx[idx];
+            if (u < v) { // Avoid duplicates in undirected graph
+                edges.emplace_back(u, v);
+            }
+        }
+    }
+    return edges;
+}
+
+static std::shared_ptr<mutable_graph> convert_to_viecut(const Graph& g) {
+    // Create a new viecut mutable_graph object
+    auto G = std::make_shared<mutable_graph>();
+
+    // Initialize the graph with the number of nodes and edges
+    std::vector<std::tuple<uint32_t, uint32_t> > edges = get_edges(g);
+
+    size_t nmbNodes = g.num_nodes;
+    size_t nmbEdges = g.num_edges;
+
+    NodeID node_counter = 0;
+    EdgeID edge_counter = 0;
+
+    G->start_construction(nmbNodes, nmbEdges);
+
+    // Add nodes to the graph
+    for (int i = 0; i < nmbNodes; i++) {
+        NodeID node = G->new_node();
+        node_counter++;
+        G->setPartitionIndex(node, 0);
+    }
+
+    // Add edges to the graph
+    for (std::tuple<int, int> edge : edges) {
+        NodeID u = std::get<0>(edge);
+        NodeID v = std::get<1>(edge);
+
+        G->new_edge(u, v, 1);
+    }
+
+    // Finalize the graph construction
+    G->finish_construction();
+    G->computeDegrees();
+    
+    return G;
+}
+
+MincutResult compute_mincut(const Graph& g) {
+    // Set the algorithm and queue type
+    auto cfg = configuration::getConfig();
+    cfg->algorithm = "noi";
+    cfg->queue_type = "bqueue";
+    cfg->find_most_balanced_cut = false;
+    cfg->save_cut = true;
+
+    std::vector<int> light;
+    std::vector<int> heavy;
+
+    timer t;
+
+    // Convert to viecut graph_access
+    auto G = convert_to_viecut(g);
+
+    timer tdegs;
+
+    random_functions::setSeed(0);
+
+    NodeID n = G->number_of_nodes();
+    EdgeID m = G->number_of_edges();
+
+    //std::string algorithm = "noi"; // Default algorithm, can be changed via configuration
+    auto mc = new noi_minimum_cut<GraphPtr>();
+
+    t.restart();
+    EdgeWeight cut;
+    cut = mc->perform_minimum_cut(G);
+
+    for (NodeID node : G->nodes()) {
+        if (G->getNodeInCut(node)) {
+            light.push_back(node);
+        } else {
+            heavy.push_back(node);
+        }
+    }
+
+    free(mc);
+
+    return MincutResult(light, heavy, cut);
 }
 
 #endif // GRAPH_H

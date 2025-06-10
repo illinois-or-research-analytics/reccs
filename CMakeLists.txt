@@ -10,6 +10,9 @@ find_package(OpenMP REQUIRED)
 # Add the library directory
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/lib)
 
+# Build TLX library separately to avoid circular dependencies
+add_subdirectory(extlib/VieCut/extlib/tlx)
+
 include_directories(
     extlib/VieCut/app 
     extlib/VieCut/lib             
@@ -23,12 +26,12 @@ add_subdirectory(extlib/json)
 # Add the executable
 add_executable(reccs app/reccs.cpp)
 
-# Add the loader test executable
-# add_executable(loader_test tests/loader_test.cpp)
-
-# Link with OpenMP
-target_link_libraries(reccs PUBLIC OpenMP::OpenMP_CXX nlohmann_json::nlohmann_json)
-# target_link_libraries(loader_test PUBLIC OpenMP::OpenMP_CXX)
+# Link with OpenMP, nlohmann_json, and TLX
+target_link_libraries(reccs PUBLIC 
+    OpenMP::OpenMP_CXX 
+    nlohmann_json::nlohmann_json
+    tlx  # Link against TLX library
+)
 
 # Copy extlib directory to build directory
 file(COPY ${CMAKE_SOURCE_DIR}/extlib DESTINATION ${CMAKE_BINARY_DIR})

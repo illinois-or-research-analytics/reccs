@@ -68,7 +68,7 @@ private:
     
     // Task functions
     std::function<void(Graph&, uint32_t)> connectivity_enforce_fn;
-    std::function<void(Graph&)> wcc_stitching_fn;
+    std::function<void(Graph&, uint32_t)> wcc_stitching_fn;
     std::function<void(Graph&, std::shared_ptr<const std::vector<uint32_t>>)> deg_seq_matching_fn;
     
     // Extract subgraph for a cluster
@@ -191,7 +191,7 @@ public:
     // Set task functions
     void set_task_functions(
         std::function<void(Graph&, uint32_t)> connectivity_enforce,
-        std::function<void(Graph&)> wcc_stitch,
+        std::function<void(Graph&, uint32_t)> wcc_stitch,
         std::function<void(Graph&, std::shared_ptr<const std::vector<uint32_t>> deg_seq_match)> deg_seq_match) {
         
         connectivity_enforce_fn = connectivity_enforce;
@@ -303,7 +303,7 @@ public:
             case TaskType::WCC_STITCHING:
                 std::cout << "Processing WCC stitching for cluster " << task.cluster_id << std::endl;
                 if (wcc_stitching_fn) {
-                    wcc_stitching_fn(*task.subgraph);
+                    wcc_stitching_fn(*task.subgraph, task.min_degree_requirement);
                 }
                 // Add next task
                 task.task_type = TaskType::DEG_SEQ_MATCHING;

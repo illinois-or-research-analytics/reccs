@@ -16,6 +16,7 @@
 #include "../lib/utils/orchestrator.h"
 #include "../lib/utils/edge_extractor.h"
 #include "../lib/algorithm/enforce_degree_conn.h"
+#include "../lib/algorithm/enforce_mincut.h"
 #include "../lib/algorithm/deg_seq_matching.h"
 
 namespace fs = std::filesystem;
@@ -173,10 +174,8 @@ int main(int argc, char** argv) {
         },
         
         // WCC stitching
-        [](Graph& g) {
-            std::cout << "  Processing WCC stitching on graph with " 
-                      << g.num_nodes << " nodes" << std::endl;
-            // TODO: Implement WCC stitching
+        [](Graph& g, uint32_t min_degree) {
+            enforce_mincut(g, min_degree);
         },
         
         // Degree sequence matching
