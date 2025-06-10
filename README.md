@@ -6,8 +6,11 @@ Scalable REalistic Cluster Connectivity Simulator for synthetic network generati
   - [Requirements](#requirements)
   - [Setting Up](#setting-up)
     - [Installing Dependencies](#installing-dependencies)
-    - [Setting up `graph-tool`](#setting-up-graph-tool)
+    - [Building RECCS](#building-reccs)
+    - [Verification](#verification)
   - [Running RECCS](#running-reccs)
+    - [Quick Start](#quick-start)
+    - [Arguments](#arguments)
 
 ## Requirements
 
@@ -26,12 +29,22 @@ Simply run the following to setup (if not set up already) and load the `graph-to
 source install.sh
 ```
 
+### Building RECCS
+
 Then run the following to build the project:
 
 ```bash
 mkdir build
 cd build
 cmake .. && make
+```
+
+### Verification
+
+To verify that RECCS built successfully, simply run
+
+```bash
+./eval/eval_pipeline_mini.sh
 ```
 
 ## Running RECCS
