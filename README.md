@@ -8,6 +8,7 @@
 - **gcc/g++** (11.4.1+)
 - **python** (3.13.2+) *for graph-tool*
 - **conda** (24.9.2+) *for graph-tool*
+- **openmp** (201511+)
 
 ## 🚀 Installation
 
