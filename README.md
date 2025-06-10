@@ -20,7 +20,7 @@ Scalable REalistic Cluster Connectivity Simulator for synthetic network generati
 
 ### Installing Dependencies
 
-Simply run the following to install dependencies:
+Simply run the following to setup (if not set up already) and load the `graph-tool` conda environment and install dependencies:
 
 ```bash
 source install.sh
@@ -31,29 +31,15 @@ Then run the following to build the project:
 ```bash
 mkdir build
 cd build
-cmake ..
-make
-```
-
-### Setting up `graph-tool`
-
-**Note**: This step can be skipped if you'd rather use the native iGraph Stochastic Block Model (SBM).
-
-```bash
-conda create --name gt -c conda-forge graph-tool
-conda activate gt
+cmake .. && make
 ```
 
 ## Running RECCS
 
+### Quick Start
+
 Run using the following command:
 
 ```bash
-./reccs -e <edgelist tsv> -c <clustering tsv>
-```
-
-Or if you'd rather use iGraph's native SBM, run:
-
-```bash
-./reccs -e <edgelist tsv> -c <clustering tsv> -sbm igraph
+./reccs -e <edgelist tsv> -c <clustering tsv> -v
 ```
