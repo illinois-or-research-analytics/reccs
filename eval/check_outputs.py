@@ -63,7 +63,6 @@ def main(
 
     # Get the minimum degree mapping for both current and reference degree sequences
     min_degree_mapping = get_min_degree_mapping(degseq)
-    reference_min_degree_mapping = get_min_degree_mapping(reference_degseq)
 
     # Check if any disconnected clusters exist in the stats connectivity mapping
     disconnected_clusters = [cluster for cluster, connectivity in stats_connectivity.items() if connectivity == 0]
@@ -87,6 +86,20 @@ def main(
 
     if not connectivity_mismatch:
         print("PASS: Minimum degree matches connectivity for all clusters!")
+
+    # Check if connectivity matches between RECCS and reference stats
+    connectivity_mismatch = False
+    for cluster_id, connectivity in stats_connectivity.items():
+        cluster_id = int(cluster_id)
+        if cluster_id in reference_connectivity:
+            reference_connectivity_value = reference_connectivity[cluster_id]
+            if connectivity < reference_connectivity_value:
+                print(f"FAIL: RECCS connectivity {connectivity} does not match reference connectivity {reference_connectivity_value}.")
+                connectivity_mismatch = True
+        else:
+            print(f"FAIL: Cluster {cluster_id} not found in reference stats connectivity mapping.")
+    if not connectivity_mismatch:
+        print("PASS: Connectivity matches between RECCS and reference stats for all clusters!")
 
     # Get a histogram of degseq distances between SBM and reference, and RECCS and reference
     sbm_distances = []
