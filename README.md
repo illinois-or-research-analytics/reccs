@@ -1,27 +1,27 @@
 # RECCS++
 
-Scalable REalistic Cluster Connectivity Simulator for synthetic network generation
+**Scalable REalistic Cluster Connectivity Simulator for synthetic network generation**
 
-## Requirements
+## 🛠️ Requirements
 
-- `cmake` (3.26.5)
-- `gcc/g++` (11.4.1)
-- `python` (3.13.2) [for graph-tool]
-- `conda` (24.9.2) [for graph-tool]
+- **cmake** (3.26.5+)
+- **gcc/g++** (11.4.1+)
+- **python** (3.13.2+) *for graph-tool*
+- **conda** (24.9.2+) *for graph-tool*
 
-## Setting Up
+## 🚀 Installation
 
-### Installing Dependencies
+### 1. Install Dependencies
 
-Simply run the following to setup (if not set up already) and load the `graph-tool` conda environment and install dependencies:
+Set up and load the `graph-tool` conda environment:
 
 ```bash
 source install.sh
 ```
 
-### Building RECCS
+### 2. Build RECCS
 
-Then run the following to build the project:
+Compile the project:
 
 ```bash
 mkdir build
@@ -29,32 +29,37 @@ cd build
 cmake .. && make
 ```
 
-### Verification
+### 3. Verify Installation
 
-To verify that RECCS built successfully, simply run
+Test that RECCS built successfully:
 
 ```bash
 ./eval/eval_pipeline_mini.sh
 ```
 
-## Running RECCS
+## 📖 Usage
 
 ### Quick Start
 
-Run using the following command:
-
 ```bash
-./reccs -e <edgelist tsv> -c <clustering tsv> -v
+./reccs -e <edgelist.tsv> -c <clustering.tsv> -v
 ```
 
-### Arguments
+### Command Line Options
 
-```text
-Usage: "./reccs <edgelist.tsv> [options]"
+```
+Usage: ./reccs <edgelist.tsv> [options]
+
 Options:
-  -t <num_threads>  Number of threads to use (default: hardware concurrency)
-  -v                Verbose mode: print detailed progress information
+  -t <num_threads>  Number of threads (default: hardware concurrency)
+  -v                Enable verbose output
   -c <clusters.tsv> Load clusters from TSV file
-  -o <output_dir>   Output tsv edgelist with added edges (default: 'output')
-  -h, --help        Show this help message and exit
+  -o <output_dir>   Output directory (default: 'output')
+  -h, --help        Show help message
+```
+
+### Example
+
+```bash
+./reccs input/network.tsv -c input/clusters.tsv -o results/ -v
 ```
