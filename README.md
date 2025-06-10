@@ -2,16 +2,6 @@
 
 Scalable REalistic Cluster Connectivity Simulator for synthetic network generation
 
-- [RECCS++](#reccs)
-  - [Requirements](#requirements)
-  - [Setting Up](#setting-up)
-    - [Installing Dependencies](#installing-dependencies)
-    - [Building RECCS](#building-reccs)
-    - [Verification](#verification)
-  - [Running RECCS](#running-reccs)
-    - [Quick Start](#quick-start)
-    - [Arguments](#arguments)
-
 ## Requirements
 
 - `cmake` (3.26.5)
