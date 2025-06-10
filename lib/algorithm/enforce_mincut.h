@@ -16,11 +16,10 @@ void enforce_mincut(Graph& g, uint32_t min_cut_size) {
     std::cout << "Starting mincut enforcement. Target minimum cut size: " << min_cut_size << std::endl;
     
     int iteration = 0;
-    const int max_iterations = 100; // Prevent infinite loops
     std::random_device rd;
     std::mt19937 gen(rd());
     
-    while (iteration < max_iterations) {
+    while (true) {
         iteration++;
         std::cout << "\n--- Iteration " << iteration << " ---" << std::endl;
         
@@ -91,8 +90,9 @@ void enforce_mincut(Graph& g, uint32_t min_cut_size) {
         }
         
         if (candidate_edges.empty()) {
-            std::cout << "ERROR: No more edges can be added between partitions. "
+            std::cout << "TERMINATION: No more edges can be added between partitions. "
                       << "All possible cross-partition edges already exist." << std::endl;
+            std::cout << "Maximum achievable cut size with current partitioning: " << current_cut_size << std::endl;
             return;
         }
         
@@ -123,15 +123,6 @@ void enforce_mincut(Graph& g, uint32_t min_cut_size) {
         
         std::cout << "Added " << edges_to_add.size() << " edges in iteration " << iteration << std::endl;
     }
-    
-    // If we reach here, we hit the max iterations limit
-    std::cout << "WARNING: Reached maximum iterations (" << max_iterations 
-              << ") without achieving target cut size. Current cut may be less than " 
-              << min_cut_size << std::endl;
-              
-    // Final check
-    MincutResult final_result = compute_mincut(g);
-    std::cout << "Final minimum cut size: " << final_result.get_cut_size() << std::endl;
 }
 
 #endif // ENFORCE_MINCUT_H
