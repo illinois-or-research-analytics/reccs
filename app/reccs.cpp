@@ -29,6 +29,7 @@ void print_usage(const char* program_name) {
     std::cerr << "  -v                Verbose mode: print detailed progress information" << std::endl;
     std::cerr << "  -c <clusters.tsv> Load clusters from TSV file" << std::endl;
     std::cerr << "  -o <output_dir>   Output tsv edgelist with added edges (default: 'output')" << std::endl;
+    std::cerr << "  -h, --help        Show this help message and exit" << std::endl;
 }
 
 int main(int argc, char** argv) {

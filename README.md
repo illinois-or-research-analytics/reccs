@@ -43,3 +43,15 @@ Run using the following command:
 ```bash
 ./reccs -e <edgelist tsv> -c <clustering tsv> -v
 ```
+
+### Arguments
+
+```text
+Usage: "./reccs <edgelist.tsv> [options]"
+Options:
+  -t <num_threads>  Number of threads to use (default: hardware concurrency)
+  -v                Verbose mode: print detailed progress information
+  -c <clusters.tsv> Load clusters from TSV file
+  -o <output_dir>   Output tsv edgelist with added edges (default: 'output')
+  -h, --help        Show this help message and exit
+```
