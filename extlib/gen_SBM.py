@@ -127,6 +127,58 @@ def read_clustering(filepath: str, logger) -> pd.DataFrame:
     monitor_resources(logger)
     return cluster_df[['node_id', 'cluster_id']]
 
+def assign_missing_nodes_to_clusters(edges_df: pd.DataFrame, cluster_df: pd.DataFrame, logger) -> pd.DataFrame:
+    """
+    Identify nodes in edge list that aren't in clustering and assign them to singleton clusters.
+    
+    Args:
+        edges_df: DataFrame with edge list
+        cluster_df: DataFrame with existing clustering
+        logger: Logger function for output
+        
+    Returns:
+        pd.DataFrame: Updated clustering with singleton clusters added
+    """
+    start_time = time.time()
+    
+    # Get all unique nodes from edge list
+    edge_nodes = set(edges_df['source']).union(set(edges_df['target']))
+    cluster_nodes = set(cluster_df['node_id'])
+    
+    # Find nodes missing from clustering
+    missing_nodes = edge_nodes - cluster_nodes
+    
+    logger(f"Total nodes in edge list: {len(edge_nodes)}")
+    logger(f"Nodes with existing clusters: {len(cluster_nodes)}")
+    logger(f"Nodes missing from clustering: {len(missing_nodes)}")
+    
+    if len(missing_nodes) == 0:
+        logger("All edge nodes already have cluster assignments")
+        return cluster_df
+    
+    # Assign singleton clusters to missing nodes
+    next_cluster_id = cluster_df['cluster_id'].max() + 1 if len(cluster_df) > 0 else 0
+    
+    singleton_clusters = []
+    for node_id in missing_nodes:
+        singleton_clusters.append({
+            'node_id': node_id,
+            'cluster_id': next_cluster_id
+        })
+        next_cluster_id += 1
+    
+    # Combine original clustering with singleton clusters
+    updated_cluster_df = pd.concat([
+        cluster_df,
+        pd.DataFrame(singleton_clusters)
+    ], ignore_index=True)
+    
+    logger(f"Added {len(missing_nodes)} singleton clusters")
+    logger(f"Total clusters: {updated_cluster_df['cluster_id'].nunique()}")
+    logger(f"Singleton cluster assignment completed in {time.time() - start_time:.2f} seconds")
+    
+    return updated_cluster_df
+
 # Split pair_counts into chunks
 def chunk_dict(d, n_chunks):
     items = list(d.items())
@@ -134,12 +186,14 @@ def chunk_dict(d, n_chunks):
     return [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
 
 def build_coo_parallel(pair_counts, num_clusters, n_threads):
-    """Parallel COO construction"""
+    """Parallel COO construction with guaranteed integer dtype"""
     
     def process_chunk(chunk_pairs):
         local_rows, local_cols, local_data = [], [], []
         
         for (i, j), count in chunk_pairs:
+            # Ensure count is integer
+            count = int(count)
             local_rows.extend([i, j])
             local_cols.extend([j, i])
             local_data.extend([count, count])
@@ -161,11 +215,11 @@ def build_coo_parallel(pair_counts, num_clusters, n_threads):
         all_cols.extend(cols)
         all_data.extend(data)
     
-    # Single COO -> CSR conversion
+    # CRITICAL: Explicitly specify integer dtype to match original behavior
     coo = coo_matrix(
         (all_data, (all_rows, all_cols)),
         shape=(num_clusters, num_clusters),
-        dtype=int
+        dtype=np.int32  # Force integer type like original dok_matrix
     )
     
     return coo.tocsr()
@@ -201,15 +255,22 @@ def compute_probability_matrix(edges_df: pd.DataFrame, cluster_df: pd.DataFrame,
     # Create a crosstab to count edges between clusters
     logger("Computing inter-cluster edge counts...")
 
-    # Count the numbber of cluster pairs
+    # Count the number of cluster pairs
     num_clusters = cluster_df['cluster_id'].nunique()
 
-    # Count cluster pairs directly
+    # Count cluster pairs directly - ensure integer counts
     cluster_pairs = list(zip(edges_with_clusters['source_cluster'], 
                             edges_with_clusters['target_cluster']))
     pair_counts = Counter(cluster_pairs)
+    
+    # CRITICAL: Verify we have integer counts like the original
+    logger(f"Sample pair counts (first 3): {dict(list(pair_counts.items())[:3])}")
 
     probs_matrix = build_coo_parallel(pair_counts, num_clusters, n_threads=os.cpu_count())
+    
+    # Verify the matrix properties match the original
+    logger(f"Matrix dtype: {probs_matrix.dtype}")
+    logger(f"Matrix format: {type(probs_matrix)}")
     
     logger(f"Probability matrix computation completed in {time.time() - start_time:.2f} seconds")
     logger(f"Matrix shape: {probs_matrix.shape}, Non-zero entries: {probs_matrix.nnz}")
@@ -437,6 +498,13 @@ def main(
     # Read the edge list and clustering using pandas
     edges_df = read_edge_list(edge_input, logger)
     cluster_df = read_clustering(cluster_input, logger)
+
+    # If missing nodes in edges, assign them to singleton clusters
+    cluster_df = assign_missing_nodes_to_clusters(edges_df, cluster_df, logger)
+
+    # Debug: print head of the DataFrames
+    logger(f"Edges DataFrame head:\n{edges_df.head()}")
+    logger(f"Cluster DataFrame head:\n{cluster_df.head()}")
 
     # Compute the inter-cluster probabilities and degree sequence
     probs = compute_probability_matrix(edges_df, cluster_df, logger)

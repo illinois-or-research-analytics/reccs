@@ -1,7 +1,7 @@
 #!/bin/bash
 
-NETWORK=$(realpath ../data/cit_hepph.tsv)
-CLUSTERING=$(realpath ../data/cit_hepph_leiden_0.01.tsv)
+NETWORK=$(realpath ../data/cen.tsv)
+CLUSTERING=$(realpath ../data/cen_0.01_cm.tsv)
 
 EVAL_DIR="eval/eval_dir"
 STATS_OUTPUT=$EVAL_DIR/end.csv
