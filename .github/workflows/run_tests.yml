@@ -10,9 +10,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    defaults:
+      run:
+        working-directory: reccs
+
     steps:
     - name: Checkout repo
       uses: actions/checkout@v3
+      with:
+        path: reccs
 
     - name: Set up Python
       uses: actions/setup-python@v5
