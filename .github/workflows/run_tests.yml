@@ -25,7 +25,23 @@ jobs:
         pip install pytest
         pip install -r requirements.txt
 
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ libomp-dev
+
+    - name: Set up graph-tool environment
+      run: |
+        chmod +x install.sh
+        ./install.sh
+
+    - name: Build RECCS
+      run: |
+        mkdir -p build
+        cd build
+        cmake ..
+        make
+
     - name: Run tests with pytest
       run: |
         pytest test/ --tb=short --disable-warnings
-
