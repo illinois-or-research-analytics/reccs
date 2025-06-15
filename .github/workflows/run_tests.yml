@@ -27,5 +27,5 @@ jobs:
 
     - name: Run tests with pytest
       run: |
-        pytest tests/ --tb=short --disable-warnings
+        pytest test/ --tb=short --disable-warnings
 
