@@ -44,12 +44,6 @@ jobs:
         cmake ..
         make
 
-    - name: List all files (debug)
-      shell: bash -l {0}
-      run: |
-        conda activate gt
-        ls -R
-
     - name: Run tests with pytest in gt environment
       shell: bash -l {0}
       run: |
