@@ -28,8 +28,17 @@ def run_reccs_pipeline():
         subprocess.run(["make"], check=True)
 
         with open("test.txt", "w") as out, open("err.txt", "w") as err:
-            subprocess.run(["./reccs", str(NETWORK), "-c", str(CLUSTERING), "-o", "output.tsv", "-v"],
-                           stdout=out, stderr=err, check=True)
+            result = subprocess.run(
+                ["./reccs", str(NETWORK), "-c", str(CLUSTERING), "-o", "output.tsv", "-v"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+
+            print("========= RECCS STDOUT =========\n", result.stdout)
+            print("========= RECCS STDERR =========\n", result.stderr)
+
+            result.check_returncode() 
 
         temp_dirs = sorted(Path(build_dir).glob("temp*/"), key=os.path.getmtime, reverse=True)
         if not temp_dirs:
@@ -51,6 +60,10 @@ def run_reccs_pipeline():
 
 def test_RECCS():
     
+    
+    assert NETWORK.exists(), f"Missing network file: {NETWORK}"
+    assert CLUSTERING.exists(), f"Missing clustering file: {CLUSTERING}"
+
     run_reccs_pipeline()
     
     assert run(
