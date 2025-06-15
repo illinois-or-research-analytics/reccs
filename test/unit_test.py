@@ -17,7 +17,8 @@ SBM_OUTPUT = EVAL_DIR / "sbm.csv"
 SBM_DEGREE_SEQUENCE = EVAL_DIR / "sbm_degree_sequences.json"
 
 def run_reccs_pipeline():
-    build_dir = Path("../build").resolve()
+    build_dir = Path("build").resolve()
+    build_dir.mkdir(parents=True, exist_ok=True)
     original_dir = Path.cwd()
     EVAL_DIR.mkdir(parents=True, exist_ok=True)
 
