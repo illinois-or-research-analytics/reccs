@@ -20,7 +20,6 @@ jobs:
         python-version: 3.10
         auto-activate-base: false
         use-mamba: false
-        activate-environment: gt     # ✅ Ensures environment 'gt' is known
 
     - name: Install system dependencies
       run: |
@@ -40,14 +39,17 @@ jobs:
     - name: Build RECCS
       shell: bash -l {0}
       run: |
+        conda activate gt
         mkdir -p build
         cd build
         cmake ..
         make
 
-    - name: List all files
+    - name: List all files (debug)
       shell: bash -l {0}
-      run: ls -R
+      run: |
+        conda activate gt
+        ls -R
 
     - name: Run tests with pytest in gt environment
       shell: bash -l {0}
