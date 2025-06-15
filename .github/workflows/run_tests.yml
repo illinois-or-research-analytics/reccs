@@ -20,7 +20,7 @@ jobs:
         python-version: 3.10
         auto-activate-base: false
         use-mamba: false
-
+        activate-environment: gt     # ✅ Ensures environment 'gt' is known
 
     - name: Install system dependencies
       run: |
