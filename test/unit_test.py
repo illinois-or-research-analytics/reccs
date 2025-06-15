@@ -5,8 +5,8 @@ import os
 from pathlib import Path
 
 
-NETWORK = Path("../data/cit_hepph.tsv").resolve()
-CLUSTERING = Path("../data/cit_hepph_leiden_0.01.tsv").resolve()
+NETWORK = Path("data/cit_hepph.tsv").resolve()
+CLUSTERING = Path("data/cit_hepph_leiden_0.01.tsv").resolve()
 
 EVAL_DIR = Path("eval/eval_dir")
 STATS_OUTPUT = EVAL_DIR / "end.csv"
