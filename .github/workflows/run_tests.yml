@@ -10,10 +10,6 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: reccs
-
     steps:
     - name: Checkout repo
       uses: actions/checkout@v3
@@ -51,6 +47,11 @@ jobs:
         cd build
         cmake ..
         make
+
+
+    - name: List all files
+      run: |
+        ls
 
     - name: Run tests with pytest
       run: |
