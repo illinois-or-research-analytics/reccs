@@ -17,11 +17,10 @@ jobs:
     - name: Set up Conda
       uses: conda-incubator/setup-miniconda@v2
       with:
+        python-version: 3.10
         auto-activate-base: false
-        activate-environment: gt
-        environment-file: none
-        miniforge-variant: Mambaforge
-        miniforge-version: latest
+        use-mamba: false
+
 
     - name: Install system dependencies
       run: |
