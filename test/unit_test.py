@@ -23,42 +23,47 @@ def run_reccs_pipeline():
     EVAL_DIR.mkdir(parents=True, exist_ok=True)
 
     try:
-        os.chdir(build_dir)
-        subprocess.run(["cmake", ".."], check=True)
-        subprocess.run(["make"], check=True)
+        
+        try:
+            os.chdir(build_dir)
+            subprocess.run(["cmake", ".."], check=True)
+            subprocess.run(["make"], check=True)
 
-        with open("test.txt", "w") as out, open("err.txt", "w") as err:
-            result = subprocess.run(
-                ["./reccs", str(NETWORK), "-c", str(CLUSTERING), "-o", "output.tsv", "-v"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
+            with open("test.txt", "w") as out, open("err.txt", "w") as err:
+                result = subprocess.run(
+                    ["./reccs", str(NETWORK), "-c", str(CLUSTERING), "-o", "output.tsv", "-v"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
 
-            print("========= RECCS STDOUT =========\n", result.stdout)
-            print("========= RECCS STDERR =========\n", result.stderr)
+                print("========= RECCS STDOUT =========\n", result.stdout)
+                print("========= RECCS STDERR =========\n", result.stderr)
 
-            result.check_returncode() 
+                result.check_returncode() 
 
-        temp_dirs = sorted(Path(build_dir).glob("temp*/"), key=os.path.getmtime, reverse=True)
-                
-        if not temp_dirs:
-            raise FileNotFoundError("No temp* directories found")
-        clustered_sbm_output = temp_dirs[0] / "clustered_sbm/syn_sbm.tsv"
+            temp_dirs = sorted(Path(build_dir).glob("temp*/"), key=os.path.getmtime, reverse=True)
+                    
+            if not temp_dirs:
+                raise FileNotFoundError("No temp* directories found")
+            clustered_sbm_output = temp_dirs[0] / "clustered_sbm/syn_sbm.tsv"
+            
+        finally:
+            os.chdir(original_dir)
+
+        subprocess.run(["python3", "extlib/stats.py", "-i", str(build_dir / "output.tsv"),
+                        "-e", str(CLUSTERING), "-o", str(STATS_OUTPUT)], check=True)
+
+        subprocess.run(["python3", "extlib/stats.py", "-i", str(clustered_sbm_output),
+                        "-e", str(CLUSTERING), "-o", str(SBM_OUTPUT)], check=True)
+
+        subprocess.run(["python3", "extlib/stats.py", "-i", str(NETWORK),
+                        "-e", str(CLUSTERING), "-o", str(REF_OUTPUT)], check=True)
+            
         
     except:
-        os.listdir(EVAL_DIR)
+        os.listdir("../" + EVAL_DIR)
 
-    os.chdir(original_dir)
-
-    subprocess.run(["python3", "extlib/stats.py", "-i", str(build_dir / "output.tsv"),
-                    "-e", str(CLUSTERING), "-o", str(STATS_OUTPUT)], check=True)
-
-    subprocess.run(["python3", "extlib/stats.py", "-i", str(clustered_sbm_output),
-                    "-e", str(CLUSTERING), "-o", str(SBM_OUTPUT)], check=True)
-
-    subprocess.run(["python3", "extlib/stats.py", "-i", str(NETWORK),
-                    "-e", str(CLUSTERING), "-o", str(REF_OUTPUT)], check=True)
 
 
 def test_RECCS():
