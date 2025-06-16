@@ -3,6 +3,7 @@ from check_outputs_test import run
 import subprocess
 import os
 from pathlib import Path
+import traceback
 
 
 NETWORK = Path("data/cit_hepph.tsv").resolve()
@@ -61,8 +62,16 @@ def run_reccs_pipeline():
                         "-e", str(CLUSTERING), "-o", str(REF_OUTPUT)], check=True)
             
         
-    except:
-        os.listdir("../" + EVAL_DIR)
+    except Exception as e:
+        print("Pipeline failed with exception:", e)
+        traceback.print_exc()
+
+        if EVAL_DIR.exists():
+            print(f"\nContents of {EVAL_DIR}:\n")
+            for path in EVAL_DIR.rglob("*"):
+                print("-", path.relative_to(EVAL_DIR))
+        else:
+            print(f"Eval directory {EVAL_DIR} does not exist.")
 
 
 
