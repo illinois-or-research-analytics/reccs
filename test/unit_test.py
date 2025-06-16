@@ -45,9 +45,11 @@ def run_reccs_pipeline():
         if not temp_dirs:
             raise FileNotFoundError("No temp* directories found")
         clustered_sbm_output = temp_dirs[0] / "clustered_sbm/syn_sbm.tsv"
+        
+    except:
+        os.listdir(EVAL_DIR)
 
-    finally:
-        os.chdir(original_dir)
+    os.chdir(original_dir)
 
     subprocess.run(["python3", "extlib/stats.py", "-i", str(build_dir / "output.tsv"),
                     "-e", str(CLUSTERING), "-o", str(STATS_OUTPUT)], check=True)
