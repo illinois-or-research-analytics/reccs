@@ -36,6 +36,7 @@ jobs:
     - name: Build RECCS
       shell: bash -l {0}
       run: |
+        conda init
         conda activate gt
         mkdir -p build
         cd build
@@ -45,6 +46,7 @@ jobs:
     - name: Run tests with pytest in gt environment
       shell: bash -l {0}
       run: |
+        conda init
         conda activate gt
         pytest test/ --tb=short --disable-warnings
 

@@ -1,8 +1,11 @@
 #!/bin/bash
 
+# Enable conda shell support
+source "$(conda info --base)/etc/profile.d/conda.sh"
+
 # Check if gt environment exists, if not create it
-if ! conda env list | grep "gt$"; then
-    conda create --name gt -c conda-forge graph-tool
+if ! conda env list | grep -q "gt$"; then
+    conda create --yes --name gt -c conda-forge graph-tool
 fi
 
 
