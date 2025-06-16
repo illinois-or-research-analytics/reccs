@@ -41,9 +41,7 @@ def run_reccs_pipeline():
             result.check_returncode() 
 
         temp_dirs = sorted(Path(build_dir).glob("temp*/"), key=os.path.getmtime, reverse=True)
-        
-        print(os.listdir(EVAL_DIR))
-        
+                
         if not temp_dirs:
             raise FileNotFoundError("No temp* directories found")
         clustered_sbm_output = temp_dirs[0] / "clustered_sbm/syn_sbm.tsv"
