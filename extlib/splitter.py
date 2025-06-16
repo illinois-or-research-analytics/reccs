@@ -43,7 +43,7 @@ def main(
         cluster_start = time.time()
     
     # Get the count of nodes in each cluster
-    cluster_counts = cluster_df['cluster_id'].value_counts().reset_index()
+    cluster_counts = cluster_df['cluster_id'].value_counts().reset_index(name="count")
     # Get all nodes that are in non-singleton clusters
     non_singleton_clusters = cluster_counts[cluster_counts['count'] > 1]['cluster_id'].tolist()
     
