@@ -2,6 +2,7 @@ import pandas as pd
 import typer
 import time
 from pathlib import Path
+import traceback
 
 def main(
         edge_input: str = typer.Option(..., "--filepath", "-f"),
@@ -118,5 +119,10 @@ def main(
         print(f"Total processing time: {total_time:.2f} seconds")
 
 if __name__ == "__main__":
-    typer.run(main)
+    try:
+        typer.run(main)
+    except Exception as e:
+        print("=== SPLITTER FAILED ===")
+        traceback.print_exc()
+        raise e
     
