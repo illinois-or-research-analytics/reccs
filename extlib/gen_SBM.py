@@ -499,6 +499,14 @@ def main(
     edges_df = read_edge_list(edge_input, logger)
     cluster_df = read_clustering(cluster_input, logger)
 
+    # If the edge list is empty, return an empty graph
+    if edges_df.empty:
+        logger("Edge list is empty, generating an empty graph.")
+        with open(out_edge_file, 'w') as f:
+            f.write("")
+        logger("Empty graph saved to " + str(out_edge_file))
+        return
+
     # If missing nodes in edges, assign them to singleton clusters
     cluster_df = assign_missing_nodes_to_clusters(edges_df, cluster_df, logger)
 
