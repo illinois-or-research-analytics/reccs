@@ -37,13 +37,6 @@ ClusteringParseResult parse_clustering_chunk(const char* data, size_t begin, siz
         }
     }
     
-    // Skip header line if we're at the beginning of the file
-    if (begin == 0) {
-        // Skip first line (header)
-        while (ptr < chunk_end && *ptr != '\n') ptr++;
-        if (ptr < chunk_end) ptr++; // Skip newline
-    }
-    
     // Process each line in the chunk
     while (ptr < chunk_end) {
         // Skip empty lines and whitespace
