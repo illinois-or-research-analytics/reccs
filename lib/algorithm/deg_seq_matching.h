@@ -15,7 +15,7 @@
 void match_degree_sequence(
     Graph& g, 
     const std::shared_ptr<const std::vector<uint32_t>>& degree_sequence) {
-    
+
     // Verify that degree_sequence is valid
     if (!degree_sequence || degree_sequence->empty()) {
         std::cerr << "Error: Degree sequence is null or empty." << std::endl;
@@ -29,6 +29,10 @@ void match_degree_sequence(
         return;
     }
 
+    // Sort the degree sequence in descending order
+    std::vector<uint32_t> sorted_degree_sequence = *degree_sequence;
+    std::sort(sorted_degree_sequence.begin(), sorted_degree_sequence.end(), std::greater<uint32_t>());
+
     // Random number generator for candidate selection
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -37,7 +41,7 @@ void match_degree_sequence(
     std::unordered_map<uint32_t, uint32_t> available_node_degrees;
     for (uint32_t i = 0; i < g.num_nodes; ++i) {
         uint32_t current_deg = g.get_degree(i);
-        uint32_t target_deg = (*degree_sequence)[i];
+        uint32_t target_deg = sorted_degree_sequence[i];
         
         if (target_deg > current_deg) {
             available_node_degrees[i] = target_deg - current_deg;

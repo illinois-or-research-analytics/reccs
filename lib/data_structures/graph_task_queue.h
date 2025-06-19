@@ -240,6 +240,9 @@ public:
             
             // Extract subgraph for this cluster
             auto subgraph = extract_subgraph(graph, nodes, missing_nodes);
+
+            // Assign cluster ID and index
+            subgraph->id = clustering.cluster_ids[cluster_idx];
             
             // Get connectivity requirement for this cluster
             std::string cluster_id = clustering.cluster_ids[cluster_idx];
