@@ -26,6 +26,9 @@ void match_degree_sequence(
         return;
     }
 
+    // Track number of edges added
+    uint32_t edges_added = 0;
+
     // Get current degrees and sort both sequences
     std::vector<uint32_t> current_degrees;
     current_degrees.reserve(g.num_nodes);
@@ -132,6 +135,7 @@ void match_degree_sequence(
             // Add the edge
             g.add_edge(available_node, random_node);
             existing_edges.insert(statics::encode_edge(available_node, random_node));
+            edges_added++;
 
             // Update random_node's deficit
             if (available_node_degrees[random_node] > 1) {
@@ -148,6 +152,8 @@ void match_degree_sequence(
         // available_node is now satisfied, remove it
         available_node_degrees.erase(available_node);
     }
+
+    std::cout << "[Graph " << g.id << "]: Number of edges added: " << edges_added << std::endl;
 }
 
 #endif
