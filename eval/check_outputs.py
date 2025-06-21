@@ -31,6 +31,8 @@ def get_degseq_euclidean_distance(cluster_id, output_degrees, reference_degrees)
     return distance
 
 def main(
+    edgelist_output: str = typer.Option(..., "--edgelist", "-e", help="Output edgelist filename"),
+    sbm_edgelist_output: str = typer.Option(..., "--sbm_edgelist", "-se", help="SBM edgelist filename"),
     stats_dir: str = typer.Option(..., "--stats_output", "-s", help="Output stats filename"),
     degseq_dir: str = typer.Option(..., "--degree_sequence", "-d", help="Output degree sequence filename"),
     reference_stats_dir: str = typer.Option(..., "--reference_stats", "-rs", help="Reference stats filename"),
@@ -42,6 +44,52 @@ def main(
     """
     Checks validity of RECCS output stats
     """
+    # Load the edgelist output
+    try:
+        edgelist_df = pd.read_csv(edgelist_output, header=None, sep='\t')
+        print(edgelist_df.head())
+        if edgelist_df.shape[1] != 2:
+            raise ValueError("Edgelist output must have exactly two columns for source and target nodes.")
+    except Exception as e:
+        print(f"FAIL: Could not load edgelist output file '{edgelist_output}'. Error: {e}")
+        return
+    
+    print(f"PASS: Edgelist output file '{edgelist_output}' loaded successfully.")
+
+    # Check if the edgelist contains any self-loops
+    if (edgelist_df[0] == edgelist_df[1]).any():
+        print("FAIL: Edgelist contains self-loops.")
+    else:
+        print("PASS: No self-loops found in the edgelist.")
+
+    # Check if the edgelist contains any duplicate edges
+    if edgelist_df.duplicated().any():
+        print("FAIL: Edgelist contains duplicate edges.")
+    else:
+        print("PASS: No duplicate edges found in the edgelist.")
+
+    # Do the same checks for the SBM edgelist output
+    try:
+        sbm_edgelist_df = pd.read_csv(sbm_edgelist_output, header=None, sep='\t')
+        print(sbm_edgelist_df.head())
+        if sbm_edgelist_df.shape[1] != 2:
+            raise ValueError("SBM edgelist output must have exactly two columns for source and target nodes.")
+    except Exception as e:
+        print(f"FAIL: Could not load SBM edgelist output file '{sbm_edgelist_output}'. Error: {e}")
+        return
+    print(f"PASS: SBM edgelist output file '{sbm_edgelist_output}' loaded successfully.")
+    # Check if the SBM edgelist contains any self-loops
+    if (sbm_edgelist_df[0] == sbm_edgelist_df[1]).any():
+        print("FAIL: SBM edgelist contains self-loops.")
+    else:
+        print("PASS: No self-loops found in the SBM edgelist.")
+
+    # Check if the SBM edgelist contains any duplicate edges
+    if sbm_edgelist_df.duplicated().any():
+        print("FAIL: SBM edgelist contains duplicate edges.")
+    else:
+        print("PASS: No duplicate edges found in the SBM edgelist.")
+
     # Load the stats file csv
     stats_df = pd.read_csv(stats_dir)
     reference_stats_df = pd.read_csv(reference_stats_dir)
