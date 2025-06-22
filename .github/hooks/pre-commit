@@ -1,0 +1,14 @@
+#!/bin/bash
+
+echo "Running pre-commit verification test..."
+
+# You can change this to whatever command you want, e.g., python3 test/verify.py
+pytest test/unit_test.py --tb=short --disable-warnings
+
+# Check exit status
+if [ $? -ne 0 ]; then
+  echo "❌ Tests failed. Commit aborted."
+  exit 1
+else
+  echo "✅ Tests passed. Proceeding with commit."
+fi
