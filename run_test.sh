@@ -1,14 +1,25 @@
 #!/bin/bash
-set -e  # fail if any step fails
+set -e  # Stop on any error
 
-# 1. Activate your conda env with graph-tool
+echo "🔧 Loading required modules..."
+
+# Load appropriate compiler, cmake, and conda modules
+module load gcc/13.3.0
+module load miniconda3/24.9.2
+module load python/3.13.2
+module load cmake   # If needed, or install via conda if not available
+
+echo "📦 Activating Conda environment via install.sh..."
 source install.sh
 
-# 2. Build C++ code
+echo "🏗️ Building RECCS++..."
 mkdir -p build
 cd build
 cmake .. && make
 cd ..
 
-# 3. Run your test suite
+pip install pytest
+
+echo "✅ Running pytest..."
 pytest ./test/unit_test.py
+
