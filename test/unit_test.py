@@ -6,6 +6,7 @@ from pathlib import Path
 import traceback
 
 
+
 NETWORK = Path("data/cit_hepph.tsv").resolve()
 CLUSTERING = Path("data/cit_hepph_leiden_0.01.tsv").resolve()
 
@@ -31,6 +32,8 @@ def run_reccs_pipeline():
             subprocess.run(["make"], check=True)
 
             with open("test.txt", "w") as out, open("err.txt", "w") as err:
+                
+                print(" ".join(["./reccs", str(NETWORK), "-c", str(CLUSTERING), "-o", "output.tsv", "-v"]))
                 result = subprocess.run(
                     ["./reccs", str(NETWORK), "-c", str(CLUSTERING), "-o", "output.tsv", "-v"],
                     stdout=subprocess.PIPE,

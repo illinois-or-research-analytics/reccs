@@ -5,3 +5,6 @@ networkit==11.1.post1
 scipy==1.15.2
 pytest
 pre-commit
+psutil==5.9.8
+tqdm
+setuptools
