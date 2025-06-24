@@ -36,7 +36,9 @@ python3 extlib/stats.py -i $CLUSTERED_SBM_OUTPUT -e $CLUSTERING -o $SBM_OUTPUT
 python3 extlib/stats.py -i $NETWORK -e $CLUSTERING -o $REF_OUTPUT
 
 # Run the evaluation script
-python3 eval/check_outputs.py -s $STATS_OUTPUT \
+python3 eval/check_outputs.py -e build/output.tsv \
+                              -se $CLUSTERED_SBM_OUTPUT \
+                              -s $STATS_OUTPUT \
                               -d $END_DEGREE_SEQ \
                               -rs $REF_OUTPUT \
                               -rd $REF_DEGREE_SEQ \

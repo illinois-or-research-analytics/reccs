@@ -13,8 +13,9 @@
 #include "../utils/statics.h"
 
 void enforce_mincut(Graph& g, uint32_t min_cut_size) {
-    std::cout << "Starting mincut enforcement. Target minimum cut size: " << min_cut_size << std::endl;
-    
+    std::cout << "Starting mincut enforcement on cluster "
+              << g.id << ". Target minimum cut size: " << min_cut_size << std::endl;
+
     int iteration = 0;
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -26,12 +27,12 @@ void enforce_mincut(Graph& g, uint32_t min_cut_size) {
         // Get current minimum cut
         MincutResult result = compute_mincut(g);
         uint32_t current_cut_size = result.get_cut_size();
-        
-        std::cout << "Current minimum cut size: " << current_cut_size << std::endl;
-        
+
+        std::cout << "[Cluster " << g.id << "] Current minimum cut size: " << current_cut_size << std::endl;
+
         // Check if we've reached the target
         if (current_cut_size >= min_cut_size) {
-            std::cout << "SUCCESS: Cut size " << current_cut_size 
+            std::cout << "[Cluster " << g.id << "] SUCCESS: Cut size " << current_cut_size 
                       << " meets the minimum requirement of " << min_cut_size 
                       << ". Stopping enforcement after " << iteration << " iterations." << std::endl;
             return;
@@ -39,17 +40,17 @@ void enforce_mincut(Graph& g, uint32_t min_cut_size) {
         
         // Calculate how many edges we need to add
         uint32_t edges_needed = min_cut_size - current_cut_size;
-        std::cout << "Need to add " << edges_needed << " more edges between partitions." << std::endl;
-        
+        std::cout << "[Cluster " << g.id << "] Need to add " << edges_needed << " more edges between partitions." << std::endl;
+
         // Get the two partitions
         const std::vector<unsigned int>& light_partition = result.get_light_partition();
         const std::vector<unsigned int>& heavy_partition = result.get_heavy_partition();
-        
-        std::cout << "Light partition size: " << light_partition.size() 
+
+        std::cout << "[Cluster " << g.id << "] Light partition size: " << light_partition.size() 
                   << ", Heavy partition size: " << heavy_partition.size() << std::endl;
         
         if (light_partition.empty() || heavy_partition.empty()) {
-            std::cout << "ERROR: One partition is empty. Cannot add cross-partition edges." << std::endl;
+            std::cout << "[Cluster " << g.id << "] ERROR: One partition is empty. Cannot add cross-partition edges." << std::endl;
             return;
         }
         

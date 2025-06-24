@@ -439,12 +439,12 @@ private:
             return false;
         }
         
-        if (std::filesystem::file_size(filepath) == 0) {
-            if (verbose_) {
-                std::cerr << "File is empty: " << filepath << std::endl;
-            }
-            return false;
-        }
+        // if (std::filesystem::file_size(filepath) == 0) {
+        //     if (verbose_) {
+        //         std::cerr << "File is empty: " << filepath << std::endl;
+        //     }
+        //     return false;
+        // }
         
         return true;
     }

@@ -32,6 +32,9 @@ typedef std::shared_ptr<graph_type> GraphPtr;
 
 // CSR representation for undirected graph
 struct Graph {
+    // Graph id
+    std::string id;
+
     std::vector<uint32_t> row_ptr;  // Offsets for each node's edge list
     std::vector<uint32_t> col_idx;  // Target nodes
     
