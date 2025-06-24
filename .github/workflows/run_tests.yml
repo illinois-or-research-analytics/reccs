@@ -1,0 +1,51 @@
+name: Run Pytest
+
+on:
+  push:
+    branches: [ ci-cd ]
+  pull_request:
+    branches: [ ci-cd ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v3
+
+    - name: Set up Miniconda
+      uses: conda-incubator/setup-miniconda@v2
+      with:
+        auto-activate-base: false
+        environment-file: environment.yml
+        python-version: 3.12
+        use-mamba: true
+        activate-environment: graph-tool-env
+
+    - name: Init submodules
+      run: |
+        git submodule update --init --recursive
+
+    - name: Set up graph-tool environment using install.sh
+      shell: bash -l {0}
+      run: |
+        chmod +x install.sh
+        ./install.sh
+
+    - name: Build RECCS
+      shell: bash -l {0}
+      run: |
+        conda init
+        conda activate gt
+        mkdir -p build
+        cd build
+        cmake ..
+        make
+
+    - name: Run tests with pytest in gt environment
+      shell: bash -l {0}
+      run: |
+        conda init
+        conda activate gt
+        pytest test/ --tb=short --disable-warnings

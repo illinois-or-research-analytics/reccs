@@ -38,6 +38,16 @@ Test that RECCS built successfully:
 ./eval/eval_pipeline_mini.sh
 ```
 
+### 4. Initiate Pre-Commit Hook (For UIUC Campus Cluster Development Only)
+
+Run this command in the terminal with your conda env active:
+
+```bash
+pre-commit install
+```
+
+This will run automated tests before you commit anychanges to Python or C++ files
+
 ## 📖 Usage
 
 RECCS++ supports two modes: **Normal mode** (runs full pipeline) and **Checkpoint mode** (skips orchestrator using pre-generated files).

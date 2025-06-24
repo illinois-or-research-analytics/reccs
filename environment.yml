@@ -1,0 +1,12 @@
+name: graph-tool-env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - graph-tool
+  - gcc=11
+  - gxx=11
+  - cmake>=3.26
+  - openmp
+  - pytest
