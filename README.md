@@ -38,7 +38,7 @@ Test that RECCS built successfully:
 ./eval/eval_pipeline_mini.sh
 ```
 
-### 4. Initiate Pre-Commit Hook
+### 4. Initiate Pre-Commit Hook (For UIUC Campus Cluster Development Only)
 
 Run this command in the terminal with your conda env active:
 
