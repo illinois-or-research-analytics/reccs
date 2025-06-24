@@ -8,3 +8,5 @@ pre-commit
 psutil==5.9.8
 tqdm
 setuptools
+git+https://github.com/vikramr2/python-mincut
+git+https://github.com/illinois-or-research-analytics/cm_pipeline

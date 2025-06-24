@@ -11,8 +11,6 @@ module load openmpi
 echo "Running install.sh"
 source install.sh
 
-pip install git+https://github.com/illinois-or-research-analytics/cm_pipeline
-pip install git+https://github.com/vikramr2/python-mincut
 
 echo "Building RECCS++..."
 mkdir -p build
