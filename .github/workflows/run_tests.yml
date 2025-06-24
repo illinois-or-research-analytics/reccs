@@ -49,9 +49,3 @@ jobs:
         conda init
         conda activate gt
         pytest test/ --tb=short --disable-warnings
-
-    - name: List Directory
-      shell: bash -l {0}
-      run: |
-        cd eval/eval_dir
-        ls
