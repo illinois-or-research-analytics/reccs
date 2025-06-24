@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+[ -d "./eval/eval_dir" ] && rm -rf ./eval/eval_dir && echo "Deleted ./eval/eval_dir"
+
 echo "Loading required modules"
 
 module load gcc/13.3.0

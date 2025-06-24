@@ -6,7 +6,6 @@ from pathlib import Path
 import traceback
 
 
-
 NETWORK = Path("data/cit_hepph.tsv").resolve()
 CLUSTERING = Path("data/cit_hepph_leiden_0.01.tsv").resolve()
 
