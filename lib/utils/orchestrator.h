@@ -344,7 +344,7 @@ private:
         if (verbose_) {
             sbm_clustered_command += " -v";
             sbm_unclustered_command += " -v";
-            // Note: compute_degseq.py doesn't appear to have a verbose flag
+            // Note: compute_degseq.py doesn't have a verbose flag
         }
         
         // Execute all three commands in parallel
