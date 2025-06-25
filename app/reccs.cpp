@@ -388,43 +388,52 @@ int main(int argc, char** argv) {
         std::cout << "Processed " << completed_subgraphs.size() << " subgraphs." << std::endl;
     }
 
-    // Output the added edges to a TSV file
-    std::string added_edges_path;
-    if (checkpoint_mode) {
-        // In checkpoint mode, create a temp file for added edges
-        added_edges_path = "temp_added_edges_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ".tsv";
-    } else {
-        // Use temp directory from orchestrator
-        std::string temp_dir = fs::path(clustered_sbm_graph_path).parent_path().parent_path();
-        added_edges_path = temp_dir + "/added_edges.tsv";
+    // Fetch newly added edges (these use original node IDs)
+    auto newly_added_edges_raw = EdgeExtractor::find_newly_added_edges(
+        clustered_sbm_graph, completed_subgraphs);
+
+    // Convert original node IDs back to internal indices
+    std::vector<std::pair<uint32_t, uint32_t>> newly_added_edges = 
+        EdgeExtractor::get_compressed_newly_added_edges(
+            clustered_sbm_graph, newly_added_edges_raw, verbose);
+
+    // Now add edges using internal indices
+    add_edges_batch(clustered_sbm_graph, newly_added_edges);
+
+    // Perform degree sequence matching on the entire clustered SBM graph
+    if (verbose) {
+        std::cout << "Performing degree sequence matching on the entire clustered SBM graph..." << std::endl;
+    }
+    match_degree_sequence(clustered_sbm_graph, reference_degree_sequence);
+
+    // Write the modified clustered SBM graph to a temporary file
+    std::string temp_clustered_path = "temp_clustered_modified.tsv";
+    if (verbose) {
+        std::cout << "Writing modified clustered SBM graph to temporary file: " << temp_clustered_path << std::endl;
+    }
+    save_graph_edgelist(temp_clustered_path, clustered_sbm_graph, verbose);
+
+    // Concatenate the modified clustered and unclustered SBM graphs
+    if (verbose) {
+        std::cout << "Concatenating modified clustered and unclustered SBM graphs to: " << output_file << std::endl;
     }
     
-    auto newly_added_edges = EdgeExtractor::find_newly_added_edges(
-        clustered_sbm_graph, completed_subgraphs);
-    EdgeExtractor::write_edges_to_tsv_no_header(newly_added_edges, added_edges_path);
-
-    if (verbose) {
-        std::cout << "Wrote newly added edges to: " << added_edges_path << std::endl;
-    }
-
-    // Concatenate the clustered and unclustered SBM graphs, and the added edges
     std::ofstream output_stream(output_file);
-
-    // Just dump all files into output
-    for (const std::string& file : {clustered_sbm_graph_path, unclustered_sbm_graph_path, added_edges_path}) {
-        std::ifstream in(file);
-        output_stream << in.rdbuf();
-    }
-
-    if (verbose) {
-        std::cout << "Concatenated clustered and unclustered SBM graphs, and added edges into: " 
-                  << output_file << std::endl;
-    }
-
-    // Clean up temporary added_edges file if in checkpoint mode
-    if (checkpoint_mode && fs::exists(added_edges_path)) {
-        fs::remove(added_edges_path);
-    }
+    
+    // Write modified clustered SBM graph
+    std::ifstream clustered_in(temp_clustered_path);
+    output_stream << clustered_in.rdbuf();
+    clustered_in.close();
+    
+    // Write unclustered SBM graph
+    std::ifstream unclustered_in(unclustered_sbm_graph_path);
+    output_stream << unclustered_in.rdbuf();
+    unclustered_in.close();
+    
+    output_stream.close();
+    
+    // Clean up temporary file
+    fs::remove(temp_clustered_path);
 
     if (verbose) {
         // Print timing information

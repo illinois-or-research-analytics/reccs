@@ -79,6 +79,16 @@ struct Graph {
         num_edges++;
     }
 
+    // Add a node to the graph
+    uint32_t add_node(uint64_t original_id) {
+        uint32_t new_id = num_nodes;
+        node_map[original_id] = new_id;
+        id_map.push_back(original_id);
+        num_nodes++;
+        row_ptr.push_back(row_ptr.back()); // Initialize new row_ptr entry
+        return new_id;
+    }
+
     // Get degree of a node
     uint32_t get_degree(uint32_t node) const {
         if (node >= num_nodes) return 0;
