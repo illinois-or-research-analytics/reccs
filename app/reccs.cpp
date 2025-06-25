@@ -133,8 +133,7 @@ int main(int argc, char** argv) {
             } else if (arg == "--requirements" && i + 1 < argc) {
                 checkpoint_args.requirements_path = argv[++i];
             } else if (arg == "--degseq" && i + 1 < argc) {
-                // Keep parsing for backward compatibility but ignore
-                ++i; // Skip the degseq path argument
+                checkpoint_args.degseq_path = argv[++i];
             } else if (arg == "-h" || arg == "--help") {
                 print_usage(argv[0]);
                 return 0;
@@ -145,15 +144,17 @@ int main(int argc, char** argv) {
             }
         }
         
-        // Validate checkpoint arguments (excluding degseq now)
+        // Validate checkpoint arguments (including degseq now)
         if (checkpoint_args.clustered_sbm_path.empty() || 
             checkpoint_args.unclustered_sbm_path.empty() ||
-            checkpoint_args.requirements_path.empty()) {
-            std::cerr << "Error: In checkpoint mode, clustered-sbm, unclustered-sbm, and requirements arguments are required." << std::endl;
+            checkpoint_args.requirements_path.empty() ||
+            checkpoint_args.degseq_path.empty()) {
+            std::cerr << "Error: In checkpoint mode, clustered-sbm, unclustered-sbm, requirements, and degseq arguments are required." << std::endl;
             std::vector<std::string> missing;
             if (checkpoint_args.clustered_sbm_path.empty()) missing.push_back("--clustered-sbm");
             if (checkpoint_args.unclustered_sbm_path.empty()) missing.push_back("--unclustered-sbm");
             if (checkpoint_args.requirements_path.empty()) missing.push_back("--requirements");
+            if (checkpoint_args.degseq_path.empty()) missing.push_back("--degseq");
             
             std::cerr << "Missing arguments: ";
             for (size_t i = 0; i < missing.size(); ++i) {
@@ -176,7 +177,8 @@ int main(int argc, char** argv) {
         std::vector<std::string> files_to_check = {
             checkpoint_args.clustered_sbm_path,
             checkpoint_args.unclustered_sbm_path,
-            checkpoint_args.requirements_path
+            checkpoint_args.requirements_path,
+            checkpoint_args.degseq_path
         };
         
         std::vector<std::string> missing_files;
@@ -241,7 +243,7 @@ int main(int argc, char** argv) {
     std::string clustered_sbm_graph_path;
     std::string unclustered_sbm_graph_path;
     std::string requirements_filename;
-    // Removed degseq_filename variable
+    std::string degseq_filename;
     
     if (checkpoint_mode) {
         if (verbose) {
@@ -252,7 +254,7 @@ int main(int argc, char** argv) {
         clustered_sbm_graph_path = checkpoint_args.clustered_sbm_path;
         unclustered_sbm_graph_path = checkpoint_args.unclustered_sbm_path;
         requirements_filename = checkpoint_args.requirements_path;
-        // Removed degseq_filename assignment
+        degseq_filename = checkpoint_args.degseq_path;
         
     } else {
         // Normal mode - run orchestrator
@@ -286,7 +288,7 @@ int main(int argc, char** argv) {
         clustered_sbm_graph_path = temp_dir + "/clustered_sbm/syn_sbm.tsv";
         unclustered_sbm_graph_path = temp_dir + "/unclustered_sbm/syn_sbm.tsv";
         requirements_filename = temp_dir + "/clustered_stats.csv";
-        // Removed degseq_filename assignment
+        degseq_filename = temp_dir + "/reference_degree_sequence.json";
     }
     
     // Load the clustered SBM graph and clustering
@@ -326,7 +328,28 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Removed degree sequence loading section
+    // Load the reference degree sequence
+    std::shared_ptr<const std::vector<uint32_t>> reference_degree_sequence;
+    
+    if (verbose) {
+        std::cout << "Loading reference degree sequence from: " << degseq_filename << std::endl;
+    }
+    
+    json degseq_json = load_degseq_json(degseq_filename);
+    if (degseq_json.empty()) {
+        std::cerr << "Error: Failed to load reference degree sequence from " << degseq_filename << std::endl;
+        return 1;
+    }
+    
+    // Convert JSON array to vector<uint32_t> and wrap in shared_ptr
+    auto sequence = std::make_shared<const std::vector<uint32_t>>(
+        degseq_json.get<std::vector<uint32_t>>());
+    reference_degree_sequence = sequence;
+    
+    if (verbose) {
+        std::cout << "Successfully loaded reference degree sequence with " 
+                  << reference_degree_sequence->size() << " degrees." << std::endl;
+    }
 
     // Print loaded requirements statistics
     if (verbose) {
