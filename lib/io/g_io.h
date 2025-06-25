@@ -13,6 +13,7 @@
 #include <chrono>
 #include "../data_structures/graph.h"
 #include "mapped_file.h"
+#include <omp.h>
 
 Graph load_undirected_tsv_edgelist_parallel(const std::string& filename, int num_threads = std::thread::hardware_concurrency(), bool verbose = false) {
     Graph graph;
@@ -23,6 +24,8 @@ Graph load_undirected_tsv_edgelist_parallel(const std::string& filename, int num
         return graph;
     }
     
+    omp_set_num_threads(num_threads);
+    
     const char* data = file.data();
     size_t file_size = file.size();
     
@@ -31,22 +34,21 @@ Graph load_undirected_tsv_edgelist_parallel(const std::string& filename, int num
         std::cout << "Step 1: Parsing file and collecting edges..." << std::endl;
     }
     
-    std::vector<std::thread> threads;
-    std::vector<std::unordered_map<uint64_t, uint32_t>> local_node_maps(num_threads);
-    std::vector<std::vector<std::pair<uint64_t, uint64_t>>> local_edges(num_threads);
-    
-    std::atomic<size_t> next_chunk_start(0);
-    std::atomic<size_t> processed_bytes(0);
+    // Step 1: Parse file in parallel chunks
     size_t chunk_size = 64 * 1024 * 1024; // 64 MB chunks
+    size_t num_chunks = (file_size + chunk_size - 1) / chunk_size;
     
-    auto process_chunk = [&](int thread_id) {
-        local_edges[thread_id].reserve(10000000); // Pre-allocate space for edges
+    std::vector<std::vector<std::pair<uint64_t, uint64_t>>> thread_edges(num_threads);
+    std::vector<std::unordered_set<uint64_t>> thread_nodes(num_threads);
+    
+    #pragma omp parallel
+    {
+        int thread_id = omp_get_thread_num();
+        thread_edges[thread_id].reserve(1000000);
         
-        while (true) {
-            // Get next chunk to process
-            size_t chunk_begin = next_chunk_start.fetch_add(chunk_size);
-            if (chunk_begin >= file_size) break;
-            
+        #pragma omp for schedule(dynamic)
+        for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
+            size_t chunk_begin = chunk_idx * chunk_size;
             size_t chunk_end = std::min(chunk_begin + chunk_size, file_size);
             
             // Adjust chunk_begin to start at beginning of a line
@@ -78,196 +80,110 @@ Graph load_undirected_tsv_edgelist_parallel(const std::string& filename, int num
                     ptr++;
                 }
                 
-                // Add to local maps
-                local_node_maps[thread_id][src] = 0; // Temporary value
-                local_node_maps[thread_id][dst] = 0; // Temporary value
-                
-                // Store the edge
-                local_edges[thread_id].emplace_back(src, dst);
+                // Store edge and nodes
+                thread_edges[thread_id].emplace_back(src, dst);
+                thread_nodes[thread_id].insert(src);
+                thread_nodes[thread_id].insert(dst);
                 
                 // Skip to next line
                 while (ptr < end && *ptr != '\n') ptr++;
                 if (ptr < end) ptr++; // Skip newline
             }
-            
-            // Update progress
-            processed_bytes.fetch_add(chunk_end - chunk_begin);
-            
-            if (verbose && thread_id == 0) {
-                double progress = static_cast<double>(processed_bytes) / file_size * 100.0;
-                std::cout << "\rParsing progress: " << std::fixed << std::setprecision(1) 
-                          << progress << "%" << std::flush;
-            }
         }
-    };
-    
-    // Launch threads for the first pass
-    for (int i = 0; i < num_threads; i++) {
-        threads.emplace_back(process_chunk, i);
-    }
-    
-    // Wait for threads to finish
-    for (auto& t : threads) {
-        t.join();
     }
     
     if (verbose) {
-        std::cout << std::endl; // End the progress line
-        std::cout << "Step 2: Building node ID mapping..." << std::endl;
+        std::cout << "Step 2: Building global node mapping..." << std::endl;
     }
     
-    std::unordered_map<uint64_t, uint32_t>& node_map = graph.node_map;
-    
-    // Report on thread distribution if verbose
-    if (verbose) {
-        for (int i = 0; i < num_threads; i++) {
-            std::cout << "Thread " << i << " processed " 
-                      << local_edges[i].size() << " edges and found "
-                      << local_node_maps[i].size() << " unique nodes." << std::endl;
-        }
+    // Merge thread-local node sets
+    std::unordered_set<uint64_t> all_nodes;
+    for (const auto& nodes : thread_nodes) {
+        all_nodes.insert(nodes.begin(), nodes.end());
     }
+    thread_nodes.clear(); // Free memory
     
-    for (const auto& local_map : local_node_maps) {
-        for (const auto& entry : local_map) {
-            node_map[entry.first] = 0;
-        }
-    }
-    
-    // Clear local node maps to free memory
-    local_node_maps.clear();
-    
-    // Assign sequential IDs
-    uint32_t next_id = 0;
-    for (auto& entry : node_map) {
-        entry.second = next_id++;
-    }
-    
-    graph.num_nodes = node_map.size();
-    
-    // Create reverse mapping
+    // Build node mapping
+    graph.num_nodes = all_nodes.size();
+    graph.node_map.reserve(graph.num_nodes);
     graph.id_map.resize(graph.num_nodes);
-    for (const auto& entry : node_map) {
-        graph.id_map[entry.second] = entry.first;
-    }
     
-    // Calculate total edges (undirected)
-    for (const auto& local_edge_list : local_edges) {
-        graph.num_edges += local_edge_list.size();
+    uint32_t next_id = 0;
+    for (uint64_t original_id : all_nodes) {
+        graph.node_map[original_id] = next_id;
+        graph.id_map[next_id] = original_id;
+        next_id++;
+    }
+    all_nodes.clear(); // Free memory
+    
+    // Count total edges
+    for (const auto& edges : thread_edges) {
+        graph.num_edges += edges.size();
     }
     
     if (verbose) {
         std::cout << "Found " << graph.num_nodes << " nodes and " 
                   << graph.num_edges << " undirected edges." << std::endl;
-        std::cout << "Step 3: Counting node degrees..." << std::endl;
+        std::cout << "Step 3: Counting degrees..." << std::endl;
     }
     
-    // Use atomic vector for thread-safe degree counting
-    std::vector<std::atomic<uint32_t>> degree(graph.num_nodes);
-    for (auto& d : degree) {
-        d.store(0, std::memory_order_relaxed);
-    }
+    // Step 3: Count degrees in parallel
+    std::vector<uint32_t> degree(graph.num_nodes, 0);
     
-    // Launch threads to count degrees
-    threads.clear();
-    
-    auto count_degrees = [&](int thread_id) {
-        for (const auto& edge : local_edges[thread_id]) {
-            uint32_t src_id = node_map[edge.first];
-            uint32_t dst_id = node_map[edge.second];
-            
-            // Increment degree for both source and destination (undirected graph)
-            degree[src_id].fetch_add(1, std::memory_order_relaxed);
-            degree[dst_id].fetch_add(1, std::memory_order_relaxed);
+    #pragma omp parallel for
+    for (int t = 0; t < num_threads; ++t) {
+        std::vector<uint32_t> local_degree(graph.num_nodes, 0);
+        
+        for (const auto& edge : thread_edges[t]) {
+            uint32_t src_id = graph.node_map[edge.first];
+            uint32_t dst_id = graph.node_map[edge.second];
+            local_degree[src_id]++;
+            local_degree[dst_id]++;
         }
-    };
-    
-    for (int i = 0; i < num_threads; i++) {
-        threads.emplace_back(count_degrees, i);
-    }
-    
-    for (auto& t : threads) {
-        t.join();
+        
+        // Merge local degrees into global degree array
+        #pragma omp critical
+        {
+            for (uint32_t i = 0; i < graph.num_nodes; ++i) {
+                degree[i] += local_degree[i];
+            }
+        }
     }
     
     if (verbose) {
-        std::cout << "Step 4: Building row pointers..." << std::endl;
+        std::cout << "Step 4: Building CSR structure..." << std::endl;
     }
     
-    // Build row pointers (prefix sum)
+    // Build row pointers
     graph.row_ptr.resize(graph.num_nodes + 1);
     graph.row_ptr[0] = 0;
-    
-    for (size_t i = 0; i < graph.num_nodes; i++) {
-        graph.row_ptr[i + 1] = graph.row_ptr[i] + degree[i].load(std::memory_order_relaxed);
+    for (uint32_t i = 0; i < graph.num_nodes; ++i) {
+        graph.row_ptr[i + 1] = graph.row_ptr[i] + degree[i];
     }
     
-    if (verbose) {
-        std::cout << "Step 5: Building CSR structure in parallel..." << std::endl;
-    }
-    
-    // Prepare for parallel CSR building
-    
-    // Allocate column indices vector
+    // Allocate column indices
     size_t total_directed_edges = graph.row_ptr.back();
     graph.col_idx.resize(total_directed_edges);
     
-    // Use atomic offsets for thread-safe insertion
-    std::vector<std::atomic<uint32_t>> offsets(graph.num_nodes);
-    for (size_t i = 0; i < graph.num_nodes; i++) {
-        offsets[i].store(0, std::memory_order_relaxed);
-    }
+    // Use degree array as offset tracker (reset to 0)
+    std::fill(degree.begin(), degree.end(), 0);
     
-    // Launch threads to fill CSR
-    threads.clear();
-    std::atomic<size_t> edges_processed(0);
-    
-    auto fill_csr = [&](int thread_id) {
-        size_t local_edges_count = local_edges[thread_id].size();
-        size_t local_processed = 0;
-        
-        for (const auto& edge : local_edges[thread_id]) {
-            uint32_t src_id = node_map[edge.first];
-            uint32_t dst_id = node_map[edge.second];
+    // Fill CSR structure - this needs to be sequential or use atomic operations
+    // Option 1: Sequential (simpler and often fast enough)
+    for (int t = 0; t < num_threads; ++t) {
+        for (const auto& edge : thread_edges[t]) {
+            uint32_t src_id = graph.node_map[edge.first];
+            uint32_t dst_id = graph.node_map[edge.second];
             
             // Add edge src -> dst
-            uint32_t pos1 = graph.row_ptr[src_id] + offsets[src_id].fetch_add(1, std::memory_order_relaxed);
-            graph.col_idx[pos1] = dst_id;
+            graph.col_idx[graph.row_ptr[src_id] + degree[src_id]++] = dst_id;
             
             // Add edge dst -> src (undirected)
-            uint32_t pos2 = graph.row_ptr[dst_id] + offsets[dst_id].fetch_add(1, std::memory_order_relaxed);
-            graph.col_idx[pos2] = src_id;
-            
-            local_processed++;
-            
-            // Update progress
-            if (verbose && thread_id == 0 && local_processed % 1000000 == 0) {
-                size_t total_processed = edges_processed.fetch_add(1000000);
-                double progress = static_cast<double>(total_processed) / graph.num_edges * 100.0;
-                std::cout << "\rCSR building progress: " << std::fixed << std::setprecision(1) 
-                          << progress << "%" << std::flush;
-            }
+            graph.col_idx[graph.row_ptr[dst_id] + degree[dst_id]++] = src_id;
         }
-        
-        // Account for any remaining edges
-        if (local_processed % 1000000 != 0) {
-            edges_processed.fetch_add(local_processed % 1000000);
-        }
-    };
-    
-    for (int i = 0; i < num_threads; i++) {
-        threads.emplace_back(fill_csr, i);
     }
     
-    for (auto& t : threads) {
-        t.join();
-    }
-    
-    if (verbose) {
-        std::cout << std::endl; // End the progress line
-    }
-    
-    // Free memory from edge lists
-    local_edges.clear();
+    thread_edges.clear(); // Free memory
     
     if (verbose) {
         std::cout << "Loaded undirected graph with " << graph.num_nodes << " nodes and " 
