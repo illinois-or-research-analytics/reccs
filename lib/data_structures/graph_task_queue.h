@@ -14,15 +14,13 @@
 #include "graph.h"
 #include "clustering.h"
 #include "../io/requirements_io.h"
-#include "../utils/statics.h"
 
 
 using json = nlohmann::json;
 
 enum class TaskType {
     CONNECTIVITY_ENFORCE = 0,  // Combined degree + connectivity enforcement
-    WCC_STITCHING = 1,
-    DEG_SEQ_MATCHING = 2
+    WCC_STITCHING = 1
 };
 
 struct GraphTask {
@@ -41,15 +39,11 @@ struct GraphTask {
     // Minimum degree requirement for this cluster
     uint32_t min_degree_requirement;
 
-    // Target degree sequence for this cluster
-    std::shared_ptr<const std::vector<uint32_t>> target_degree_sequence;
-
-    // Constructor
+    // Constructor - removed degree sequence parameters
     GraphTask(std::shared_ptr<Graph> g, TaskType t, const std::string& cid, 
-              uint32_t cidx, uint32_t min_deg = 1,
-              std::shared_ptr<const std::vector<uint32_t>> deg_seq = nullptr)
+              uint32_t cidx, uint32_t min_deg = 1)
         : subgraph(g), task_type(t), cluster_id(cid), cluster_idx(cidx), 
-          min_degree_requirement(min_deg), target_degree_sequence(deg_seq) {}
+          min_degree_requirement(min_deg) {}
 };
 
 class GraphTaskQueue {
@@ -62,14 +56,10 @@ private:
     // Store completed subgraphs for post-processing
     mutable std::mutex completed_subgraphs_mutex;
     std::vector<std::shared_ptr<Graph>> completed_subgraphs;
-
-    // Store shared pointers to degree sequences
-    std::unordered_map<std::string, std::shared_ptr<const std::vector<uint32_t>>> degree_sequences;
     
-    // Task functions
+    // Task functions - removed deg_seq_matching_fn
     std::function<void(Graph&, uint32_t)> connectivity_enforce_fn;
     std::function<void(Graph&, uint32_t)> wcc_stitching_fn;
-    std::function<void(Graph&, std::shared_ptr<const std::vector<uint32_t>>)> deg_seq_matching_fn;
     
     // Extract subgraph for a cluster
     std::shared_ptr<Graph> extract_subgraph(const Graph& original, 
@@ -188,21 +178,18 @@ public:
     // Constructor
     GraphTaskQueue() = default;
     
-    // Set task functions
+    // Set task functions - removed deg_seq_match parameter
     void set_task_functions(
         std::function<void(Graph&, uint32_t)> connectivity_enforce,
-        std::function<void(Graph&, uint32_t)> wcc_stitch,
-        std::function<void(Graph&, std::shared_ptr<const std::vector<uint32_t>> deg_seq_match)> deg_seq_match) {
+        std::function<void(Graph&, uint32_t)> wcc_stitch) {
         
         connectivity_enforce_fn = connectivity_enforce;
         wcc_stitching_fn = wcc_stitch;
-        deg_seq_matching_fn = deg_seq_match;
     }
     
-    // Initialize queue with all clusters and connectivity requirements
+    // Initialize queue - removed degree_sequences_json parameter
     void initialize_queue(const Graph& graph, const Clustering& clustering,
-                         const ConnectivityRequirementsLoader& requirements,
-                         const json& degree_sequences_json) {
+                         const ConnectivityRequirementsLoader& requirements) {
         // Clear existing queue and reset counters
         {
             std::lock_guard<std::mutex> lock(queue_mutex);
@@ -213,16 +200,6 @@ public:
         
         tasks_processed = 0;
         total_tasks_created = 0;
-
-        // Store degree sequences as shared_ptr (convert JSON once)
-        degree_sequences.clear();
-        for (auto& [cluster_id, deg_seq] : degree_sequences_json.items()) {
-            auto sequence = std::make_shared<const std::vector<uint32_t>>(deg_seq.get<std::vector<uint32_t>>());
-            degree_sequences[cluster_id] = sequence;
-            
-            std::cout << "Loaded degree sequence for cluster " << cluster_id 
-                      << " with " << sequence->size() << " degrees" << std::endl;
-        }
         
         // Add each non-empty cluster to the queue
         for (uint32_t cluster_idx = 0; cluster_idx < clustering.cluster_nodes.size(); cluster_idx++) {
@@ -255,15 +232,6 @@ public:
                           << " nodes, using default min_degree=1" << std::endl;
                 min_degree = 1;
             }
-
-            // Get shared pointer to degree sequence
-            auto target_sequence = degree_sequences.count(cluster_id) 
-                                 ? degree_sequences[cluster_id] 
-                                 : statics::empty_sequence;
-            
-            if (!target_sequence || target_sequence->empty()) {
-                std::cout << "Warning: No degree sequence found for cluster " << cluster_id << std::endl;
-            }
             
             // Add to queue with first task
             add_task(GraphTask(
@@ -271,13 +239,12 @@ public:
                 TaskType::CONNECTIVITY_ENFORCE,
                 cluster_id,
                 cluster_idx,
-                min_degree,
-                target_sequence
+                min_degree
             ));
         }
         
         std::cout << "Initialized task queue with " << task_queue.size() 
-                  << " clusters with connectivity requirements and degree sequences" << std::endl;
+                  << " clusters with connectivity requirements" << std::endl;
     }
     
     // Process one task from the queue
@@ -308,21 +275,8 @@ public:
                 if (wcc_stitching_fn) {
                     wcc_stitching_fn(*task.subgraph, task.min_degree_requirement);
                 }
-                // Add next task
-                task.task_type = TaskType::DEG_SEQ_MATCHING;
-                add_task(task);
-                break;
                 
-            case TaskType::DEG_SEQ_MATCHING:
-                std::cout << "Processing degree sequence matching for cluster " << task.cluster_id << std::endl;
-                if (deg_seq_matching_fn && task.target_degree_sequence) {
-                    deg_seq_matching_fn(*task.subgraph, task.target_degree_sequence);  // Pass the shared_ptr
-                } else if (deg_seq_matching_fn) {
-                    // Fallback to empty sequence if no target sequence
-                    deg_seq_matching_fn(*task.subgraph, statics::empty_sequence);
-                }
-                
-                // Store completed subgraph
+                // Store completed subgraph (final stage now)
                 {
                     std::lock_guard<std::mutex> lock(completed_subgraphs_mutex);
                     completed_subgraphs.push_back(task.subgraph);
@@ -377,7 +331,6 @@ public:
         switch (type) {
             case TaskType::CONNECTIVITY_ENFORCE: return "connectivity_enforce";
             case TaskType::WCC_STITCHING: return "wcc_stitching";
-            case TaskType::DEG_SEQ_MATCHING: return "deg_seq_matching";
             default: return "unknown";
         }
     }

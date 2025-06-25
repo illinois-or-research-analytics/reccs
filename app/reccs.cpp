@@ -15,6 +15,7 @@
 #include "../lib/io/degseq_io.h"
 #include "../lib/utils/orchestrator.h"
 #include "../lib/utils/edge_extractor.h"
+#include "../lib/utils/statics.h"
 #include "../lib/algorithm/enforce_degree_conn.h"
 #include "../lib/algorithm/enforce_mincut.h"
 #include "../lib/algorithm/deg_seq_matching.h"
@@ -132,7 +133,8 @@ int main(int argc, char** argv) {
             } else if (arg == "--requirements" && i + 1 < argc) {
                 checkpoint_args.requirements_path = argv[++i];
             } else if (arg == "--degseq" && i + 1 < argc) {
-                checkpoint_args.degseq_path = argv[++i];
+                // Keep parsing for backward compatibility but ignore
+                ++i; // Skip the degseq path argument
             } else if (arg == "-h" || arg == "--help") {
                 print_usage(argv[0]);
                 return 0;
@@ -143,10 +145,16 @@ int main(int argc, char** argv) {
             }
         }
         
-        // Validate checkpoint arguments
-        if (!checkpoint_args.are_all_provided()) {
-            std::cerr << "Error: In checkpoint mode, all checkpoint arguments are required." << std::endl;
-            auto missing = checkpoint_args.get_missing_args();
+        // Validate checkpoint arguments (excluding degseq now)
+        if (checkpoint_args.clustered_sbm_path.empty() || 
+            checkpoint_args.unclustered_sbm_path.empty() ||
+            checkpoint_args.requirements_path.empty()) {
+            std::cerr << "Error: In checkpoint mode, clustered-sbm, unclustered-sbm, and requirements arguments are required." << std::endl;
+            std::vector<std::string> missing;
+            if (checkpoint_args.clustered_sbm_path.empty()) missing.push_back("--clustered-sbm");
+            if (checkpoint_args.unclustered_sbm_path.empty()) missing.push_back("--unclustered-sbm");
+            if (checkpoint_args.requirements_path.empty()) missing.push_back("--requirements");
+            
             std::cerr << "Missing arguments: ";
             for (size_t i = 0; i < missing.size(); ++i) {
                 std::cerr << missing[i];
@@ -164,10 +172,22 @@ int main(int argc, char** argv) {
             return 1;
         }
         
-        // Check if all checkpoint files exist
-        if (!checkpoint_args.files_exist()) {
+        // Check if required checkpoint files exist
+        std::vector<std::string> files_to_check = {
+            checkpoint_args.clustered_sbm_path,
+            checkpoint_args.unclustered_sbm_path,
+            checkpoint_args.requirements_path
+        };
+        
+        std::vector<std::string> missing_files;
+        for (const auto& file : files_to_check) {
+            if (!fs::exists(file)) {
+                missing_files.push_back(file);
+            }
+        }
+        
+        if (!missing_files.empty()) {
             std::cerr << "Error: Some checkpoint files do not exist:" << std::endl;
-            auto missing_files = checkpoint_args.get_missing_files();
             for (const auto& file : missing_files) {
                 std::cerr << "  " << file << std::endl;
             }
@@ -221,7 +241,7 @@ int main(int argc, char** argv) {
     std::string clustered_sbm_graph_path;
     std::string unclustered_sbm_graph_path;
     std::string requirements_filename;
-    std::string degseq_filename;
+    // Removed degseq_filename variable
     
     if (checkpoint_mode) {
         if (verbose) {
@@ -232,7 +252,7 @@ int main(int argc, char** argv) {
         clustered_sbm_graph_path = checkpoint_args.clustered_sbm_path;
         unclustered_sbm_graph_path = checkpoint_args.unclustered_sbm_path;
         requirements_filename = checkpoint_args.requirements_path;
-        degseq_filename = checkpoint_args.degseq_path;
+        // Removed degseq_filename assignment
         
     } else {
         // Normal mode - run orchestrator
@@ -266,7 +286,7 @@ int main(int argc, char** argv) {
         clustered_sbm_graph_path = temp_dir + "/clustered_sbm/syn_sbm.tsv";
         unclustered_sbm_graph_path = temp_dir + "/unclustered_sbm/syn_sbm.tsv";
         requirements_filename = temp_dir + "/clustered_stats.csv";
-        degseq_filename = temp_dir + "/clustered_stats_degree_sequences.json";
+        // Removed degseq_filename assignment
     }
     
     // Load the clustered SBM graph and clustering
@@ -306,19 +326,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Load the degree sequence requirements
-    if (verbose) {
-        std::cout << "Loading degree sequence requirements from: " << degseq_filename << std::endl;
-    }
-
-    json degseq_json = load_degseq_json(degseq_filename);
-    if (degseq_json.empty()) {
-        std::cerr << "Error: Failed to load degree sequence requirements from " << degseq_filename << std::endl;
-        return 1;
-    }
-    if (verbose) {
-        std::cout << "Successfully loaded degree sequence requirements." << std::endl;
-    }
+    // Removed degree sequence loading section
 
     // Print loaded requirements statistics
     if (verbose) {
@@ -328,7 +336,7 @@ int main(int argc, char** argv) {
     // Load the graph task queue
     GraphTaskQueue task_queue;
 
-    // Set up the task functions
+    // Set up the task functions (removed degree sequence matching)
     task_queue.set_task_functions(
         // Connectivity enforcement (handles both degree and connectivity)
         [](Graph& g, uint32_t min_degree) {
@@ -338,26 +346,18 @@ int main(int argc, char** argv) {
         // WCC stitching
         [](Graph& g, uint32_t min_degree) {
             enforce_mincut(g, min_degree);
-        },
-        
-        // Degree sequence matching
-        [](Graph& g, std::shared_ptr<const std::vector<uint32_t>> target_sequence) {
-            if (target_sequence && !target_sequence->empty()) {
-                std::cout << "  Processing degree sequence matching with target sequence of size "
-                          << target_sequence->size() << std::endl;
-                match_degree_sequence(g, target_sequence);
-            } else {
-                std::cout << "  No target degree sequence provided, skipping matching." << std::endl;
-            }
         }
     );
 
-    task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader, degseq_json);
-    task_queue.process_all_tasks();
-
+    // Initialize queue without degree sequence parameter
+    task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader);
+    
     if (verbose) {
         std::cout << "Initialized task queue with " << task_queue.queue_size() << " tasks." << std::endl;
     }
+
+    // Process all tasks
+    task_queue.process_all_tasks();
 
     // Retrieve completed subgraphs
     auto completed_subgraphs = task_queue.get_completed_subgraphs();
