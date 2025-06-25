@@ -63,10 +63,10 @@ public:
             auto stage1_duration = std::chrono::duration_cast<std::chrono::seconds>(
                 stage1_end_time - start_time).count();
             std::cout << "First stage completed in " << stage1_duration << " seconds" << std::endl;
-            std::cout << "Running SBM generation for both components..." << std::endl;
+            std::cout << "Running SBM generation and degree sequence computation..." << std::endl;
         }
         
-        // Step 2: Run SBM generation on both components
+        // Step 2: Run SBM generation on both components and degree sequence computation
         if (!runSecondStage()) {
             return 1;
         }
@@ -94,6 +94,7 @@ public:
             std::cout << "  - " << temp_dir_ << "/clustered_stats.csv" << std::endl;
             std::cout << "  - " << temp_dir_ << "/clustered_sbm/syn_sbm.tsv" << std::endl;
             std::cout << "  - " << temp_dir_ << "/unclustered_sbm/syn_sbm.tsv" << std::endl;
+            std::cout << "  - " << temp_dir_ << "/reference_degree_sequence.json" << std::endl;
         }
         
         return 0;
@@ -318,7 +319,7 @@ private:
     }
     
     /**
-     * @brief Run the second stage: SBM generation for both components
+     * @brief Run the second stage: SBM generation for both components and degree sequence computation
      * 
      * @return bool true if successful, false otherwise
      */
@@ -329,18 +330,24 @@ private:
         sbm_clustered_command += " -f " + clustered_edges_;
         sbm_clustered_command += " -c " + clustered_clusters_;
         sbm_clustered_command += " -o " + temp_dir_ + "/clustered_sbm";
-        
+
         std::string sbm_unclustered_command = "python3 " + sbm_script;
         sbm_unclustered_command += " -f " + unclustered_edges_;
         sbm_unclustered_command += " -c " + unclustered_clusters_;
         sbm_unclustered_command += " -o " + temp_dir_ + "/unclustered_sbm";
 
+        // Add degree sequence computation command
+        std::string degseq_command = "python3 extlib/compute_degseq.py";
+        degseq_command += " " + clustered_edges_;
+        degseq_command += " " + temp_dir_ + "/reference_degree_sequence.json";
+
         if (verbose_) {
             sbm_clustered_command += " -v";
             sbm_unclustered_command += " -v";
+            // Note: compute_degseq.py doesn't appear to have a verbose flag
         }
         
-        // Execute commands in parallel
+        // Execute all three commands in parallel
         pid_t clustered_sbm_pid = executeCommand(sbm_clustered_command, "SBM-Clustered");
         if (clustered_sbm_pid < 0) {
             std::cerr << "Error: Failed to fork for clustered SBM process" << std::endl;
@@ -352,10 +359,17 @@ private:
             std::cerr << "Error: Failed to fork for unclustered SBM process" << std::endl;
             return false;
         }
+
+        pid_t degseq_pid = executeCommand(degseq_command, "DegreeSequence");
+        if (degseq_pid < 0) {
+            std::cerr << "Error: Failed to fork for degree sequence computation process" << std::endl;
+            return false;
+        }
         
         // Store PIDs with descriptions
         pids_.push_back({clustered_sbm_pid, "SBM-Clustered"});
         pids_.push_back({unclustered_sbm_pid, "SBM-Unclustered"});
+        pids_.push_back({degseq_pid, "DegreeSequence"});
         
         return true;
     }
@@ -415,6 +429,13 @@ private:
                                   << output_file << std::endl;
                         all_success = false;
                     }
+                } else if (description == "DegreeSequence") {
+                    std::string output_file = temp_dir_ + "/reference_degree_sequence.json";
+                    if (!checkFileExistsAndNotEmpty(output_file)) {
+                        std::cerr << "Error: DegreeSequence process completed but did not generate output file: " 
+                                  << output_file << std::endl;
+                        all_success = false;
+                    }
                 }
             }
         }
@@ -458,7 +479,8 @@ private:
         std::vector<std::string> required_files = {
             temp_dir_ + "/clustered_stats.csv",
             temp_dir_ + "/clustered_sbm/syn_sbm.tsv",
-            temp_dir_ + "/unclustered_sbm/syn_sbm.tsv"
+            temp_dir_ + "/unclustered_sbm/syn_sbm.tsv",
+            temp_dir_ + "/reference_degree_sequence.json"
         };
         
         bool all_files_exist = true;
