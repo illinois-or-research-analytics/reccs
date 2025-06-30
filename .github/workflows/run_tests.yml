@@ -2,9 +2,9 @@ name: Run Pytest
 
 on:
   push:
-    branches: [ ci-cd ]
+    branches: [ main, ci-cd ]
   pull_request:
-    branches: [ ci-cd ]
+    branches: [ main, ci-cd ]
 
 jobs:
   test:
