@@ -12,6 +12,9 @@
 #include "../data_structures/graph.h"
 #include "../data_structures/node_degree.h"
 
+/**
+ * Matches the degree sequence of a graph to a target degree sequence.
+ */
 void match_degree_sequence(
     Graph& g, 
     const std::shared_ptr<const std::vector<uint32_t>>& degree_sequence) {
@@ -137,7 +140,10 @@ void match_degree_sequence(
             if (available_node_degrees[edge_end] == 0) {
                 available_node_set.erase(edge_end);
                 available_node_degrees.erase(edge_end);
-            } else {
+            } 
+
+            // Add edge_end to heap if it still has a deficit
+            else {
                 // Add updated node back to heap
                 max_heap.emplace(NodeDegree{edge_end, 
                     static_cast<int32_t>(available_node_degrees[edge_end])});
