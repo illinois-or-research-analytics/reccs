@@ -16,7 +16,11 @@
 #include "../lib/utils/orchestrator.h"
 #include "../lib/utils/edge_extractor.h"
 #include "../lib/utils/statics.h"
-#include "../lib/algorithm/enforce_degree_conn.h"
+
+//#include "../lib/algorithm/enforce_degree_conn.h"
+#include "../lib/algorithm/enforce_min_degree.h"
+#include "../lib/algorithm/enforce_connectivity.h"
+
 #include "../lib/algorithm/enforce_mincut.h"
 #include "../lib/algorithm/deg_seq_matching.h"
 
@@ -359,20 +363,25 @@ int main(int argc, char** argv) {
     // Load the graph task queue
     GraphTaskQueue task_queue;
 
-    // Set up the task functions (removed degree sequence matching)
+    // Set up the task functions with three separate functions
     task_queue.set_task_functions(
-        // Connectivity enforcement (handles both degree and connectivity)
+        // MIN_DEG_ENFORCE - Minimum degree enforcement
         [](Graph& g, uint32_t min_degree) {
-            enforce_degree_and_connectivity(g, min_degree);
+            enforce_min_degree(g, min_degree);
         },
         
-        // WCC stitching
+        // CC_STITCHING - Connectivity enforcement 
+        [](Graph& g, uint32_t min_degree) {
+            enforce_connectivity(g, min_degree);
+        },
+        
+        // WCC_STITCHING - Mincut enforcement
         [](Graph& g, uint32_t min_degree) {
             enforce_mincut(g, min_degree);
         }
     );
 
-    // Initialize queue without degree sequence parameter
+    // Initialize queue
     task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader);
     
     if (verbose) {

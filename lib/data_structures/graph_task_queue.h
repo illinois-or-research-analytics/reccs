@@ -19,8 +19,9 @@
 using json = nlohmann::json;
 
 enum class TaskType {
-    CONNECTIVITY_ENFORCE = 0,  // Combined degree + connectivity enforcement
-    WCC_STITCHING = 1
+    MIN_DEG_ENFORCE = 0,
+    CC_STITCHING = 1,
+    WCC_STITCHING = 2
 };
 
 struct GraphTask {
@@ -57,8 +58,9 @@ private:
     mutable std::mutex completed_subgraphs_mutex;
     std::vector<std::shared_ptr<Graph>> completed_subgraphs;
     
-    // Task functions - removed deg_seq_matching_fn
-    std::function<void(Graph&, uint32_t)> connectivity_enforce_fn;
+    // Task functions - updated names to match TaskType enum
+    std::function<void(Graph&, uint32_t)> min_deg_enforce_fn;
+    std::function<void(Graph&, uint32_t)> cc_stitching_fn;
     std::function<void(Graph&, uint32_t)> wcc_stitching_fn;
     
     // Extract subgraph for a cluster
@@ -178,12 +180,14 @@ public:
     // Constructor
     GraphTaskQueue() = default;
     
-    // Set task functions - removed deg_seq_match parameter
+    // Set task functions - updated to match TaskType enum
     void set_task_functions(
-        std::function<void(Graph&, uint32_t)> connectivity_enforce,
+        std::function<void(Graph&, uint32_t)> min_deg_enforce,
+        std::function<void(Graph&, uint32_t)> cc_stitch,
         std::function<void(Graph&, uint32_t)> wcc_stitch) {
         
-        connectivity_enforce_fn = connectivity_enforce;
+        min_deg_enforce_fn = min_deg_enforce;
+        cc_stitching_fn = cc_stitch;
         wcc_stitching_fn = wcc_stitch;
     }
     
@@ -233,10 +237,10 @@ public:
                 min_degree = 1;
             }
             
-            // Add to queue with first task
+            // Add to queue with first task - updated to use MIN_DEG_ENFORCE
             add_task(GraphTask(
                 subgraph,
-                TaskType::CONNECTIVITY_ENFORCE,
+                TaskType::MIN_DEG_ENFORCE,
                 cluster_id,
                 cluster_idx,
                 min_degree
@@ -249,7 +253,7 @@ public:
     
     // Process one task from the queue
     bool process_next_task() {
-        GraphTask task(nullptr, TaskType::CONNECTIVITY_ENFORCE, "", 0, 0);
+        GraphTask task(nullptr, TaskType::MIN_DEG_ENFORCE, "", 0, 0);
 
         if (!try_get_task(task)) {
             return false;  // No more tasks
@@ -257,13 +261,23 @@ public:
 
         int thread_id = omp_get_thread_num();
         
-        // Process based on task type
+        // Process based on task type - updated to match TaskType enum
         switch (task.task_type) {
-            case TaskType::CONNECTIVITY_ENFORCE:
-                std::cout << "Processing connectivity enforcement for cluster " << task.cluster_id 
+            case TaskType::MIN_DEG_ENFORCE:
+                std::cout << "Processing minimum degree enforcement for cluster " << task.cluster_id 
                           << " (min_degree=" << task.min_degree_requirement << ")" << std::endl;
-                if (connectivity_enforce_fn) {
-                    connectivity_enforce_fn(*task.subgraph, task.min_degree_requirement);
+                if (min_deg_enforce_fn) {
+                    min_deg_enforce_fn(*task.subgraph, task.min_degree_requirement);
+                }
+                // Add next task
+                task.task_type = TaskType::CC_STITCHING;
+                add_task(task);
+                break;
+                
+            case TaskType::CC_STITCHING:
+                std::cout << "Processing CC stitching for cluster " << task.cluster_id << std::endl;
+                if (cc_stitching_fn) {
+                    cc_stitching_fn(*task.subgraph, task.min_degree_requirement);
                 }
                 // Add next task
                 task.task_type = TaskType::WCC_STITCHING;
@@ -326,10 +340,11 @@ public:
         return task_queue.empty();
     }
     
-    // Get task type name for debugging
+    // Get task type name for debugging - updated to match TaskType enum
     static std::string get_task_name(TaskType type) {
         switch (type) {
-            case TaskType::CONNECTIVITY_ENFORCE: return "connectivity_enforce";
+            case TaskType::MIN_DEG_ENFORCE: return "min_deg_enforce";
+            case TaskType::CC_STITCHING: return "cc_stitching";
             case TaskType::WCC_STITCHING: return "wcc_stitching";
             default: return "unknown";
         }

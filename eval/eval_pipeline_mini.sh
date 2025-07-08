@@ -35,6 +35,15 @@ python3 extlib/stats.py -i $CLUSTERED_SBM_OUTPUT -e $CLUSTERING -o $SBM_OUTPUT
 # Run stats on the reference
 python3 extlib/stats.py -i $NETWORK -e $CLUSTERING -o $REF_OUTPUT
 
+# Run degree sequence extraction for the end output
+python3 extlib/compute_degseq.py build/output.tsv $END_DEGREE_SEQ
+
+# Run degree sequence extraction for the SBM output
+python3 extlib/compute_degseq.py $CLUSTERED_SBM_OUTPUT $SBM_DEGREE_SEQ
+
+# Run degree sequence extraction for the reference
+python3 extlib/compute_degseq.py $NETWORK $REF_DEGREE_SEQ
+
 # Run the evaluation script
 python3 eval/check_outputs.py -e build/output.tsv \
                               -se $CLUSTERED_SBM_OUTPUT \
