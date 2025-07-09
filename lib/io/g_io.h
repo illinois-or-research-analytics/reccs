@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <utility>
 #include <chrono>
+#include <algorithm>  // Add this for std::sort
 #include "../data_structures/graph.h"
 #include "mapped_file.h"
 #include <omp.h>
@@ -51,12 +52,23 @@ Graph load_undirected_tsv_edgelist_parallel(const std::string& filename, int num
             size_t chunk_begin = chunk_idx * chunk_size;
             size_t chunk_end = std::min(chunk_begin + chunk_size, file_size);
             
-            // Adjust chunk_begin to start at beginning of a line
+            // Adjust chunk_begin to start at beginning of a line (except first chunk)
             if (chunk_begin > 0) {
                 while (chunk_begin < file_size && data[chunk_begin-1] != '\n') {
                     chunk_begin++;
                 }
             }
+            
+            // Adjust chunk_end to end at end of a complete line (except last chunk)
+            if (chunk_end < file_size) {
+                while (chunk_end < file_size && data[chunk_end] != '\n') {
+                    chunk_end++;
+                }
+                if (chunk_end < file_size) chunk_end++; // Include the newline
+            }
+            
+            // Skip empty chunks that might result from boundary adjustments
+            if (chunk_begin >= chunk_end) continue;
             
             // Process the chunk
             const char* ptr = data + chunk_begin;
@@ -97,19 +109,31 @@ Graph load_undirected_tsv_edgelist_parallel(const std::string& filename, int num
     }
     
     // Merge thread-local node sets
-    std::unordered_set<uint64_t> all_nodes;
+    std::unordered_set<uint64_t> all_nodes_set;
     for (const auto& nodes : thread_nodes) {
-        all_nodes.insert(nodes.begin(), nodes.end());
+        all_nodes_set.insert(nodes.begin(), nodes.end());
     }
     thread_nodes.clear(); // Free memory
     
-    // Build node mapping
+    // CRITICAL FIX: Convert to sorted vector for deterministic ordering
+    std::vector<uint64_t> all_nodes(all_nodes_set.begin(), all_nodes_set.end());
+    std::sort(all_nodes.begin(), all_nodes.end()); // Sort to ensure deterministic mapping
+    all_nodes_set.clear(); // Free memory
+    
+    // Build node mapping with deterministic order
     graph.num_nodes = all_nodes.size();
     graph.node_map.reserve(graph.num_nodes);
     graph.id_map.resize(graph.num_nodes);
     
+    if (verbose) {
+        std::cout << "Building deterministic node mapping for " << graph.num_nodes << " nodes..." << std::endl;
+        if (graph.num_nodes > 0) {
+            std::cout << "Node ID range: " << all_nodes.front() << " to " << all_nodes.back() << std::endl;
+        }
+    }
+    
     uint32_t next_id = 0;
-    for (uint64_t original_id : all_nodes) {
+    for (uint64_t original_id : all_nodes) { // Now iterating in sorted order!
         graph.node_map[original_id] = next_id;
         graph.id_map[next_id] = original_id;
         next_id++;

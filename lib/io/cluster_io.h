@@ -197,6 +197,18 @@ Clustering load_clustering(const std::string& filename, const Graph& graph,
         std::cout << "Loaded " << clustering.get_non_empty_cluster_count() << " non-empty clusters" << std::endl;
         std::cout << "Assigned " << clustering.get_clustered_node_count() 
                   << " out of " << graph.num_nodes << " nodes to clusters" << std::endl;
+
+        // Debug: if not all nodes were assigned, report missing nodes
+        if (clustering.get_clustered_node_count() < graph.num_nodes) {
+            std::cout << "Warning: Not all nodes were assigned to clusters!" << std::endl;
+            std::cout << "List of missing nodes:" << std::endl;
+            for (uint32_t node_id = 0; node_id < graph.num_nodes; ++node_id) {
+                if (clustering.node_to_cluster_idx[node_id] == UINT32_MAX) {
+                    std::cout << "Node " << graph.id_map[node_id] << "(" << node_id << ")"
+                              << " not assigned to any cluster" << std::endl;
+                }
+            }
+        }
         
         // Check for nodes not found in the graph
         std::cout << "Nodes found in graph: " << nodes_found 

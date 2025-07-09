@@ -26,6 +26,8 @@ void match_degree_sequence(
 
     if (degree_sequence->size() != g.num_nodes) {
         std::cerr << "Error: Degree sequence size does not match number of nodes." << std::endl;
+        std::cerr << "Expected: " << g.num_nodes 
+                  << ", Got: " << degree_sequence->size() << std::endl;
         return;
     }
 
@@ -33,6 +35,7 @@ void match_degree_sequence(
     uint32_t edges_added = 0;
 
     // Get current degrees and sort them to match with target sequence
+    std::cout << "Assembling current node degrees for graph " << g.id << "..." << std::endl;
     std::vector<std::pair<uint32_t, uint32_t>> node_degrees; // (node_id, current_degree)
     node_degrees.reserve(g.num_nodes);
     
@@ -41,12 +44,17 @@ void match_degree_sequence(
     }
     
     // Sort by current degree in non-increasing order (same as target sequence)
+    std::cout << "Sorting current node degrees for graph " << g.id << "..." << std::endl;
     std::sort(node_degrees.begin(), node_degrees.end(), 
               [](const auto& a, const auto& b) { return a.second > b.second; });
     
     // Compute deficits by matching sorted current degrees with target sequence
-    std::unordered_map<uint32_t, uint32_t> available_node_degrees;
-    std::unordered_set<uint32_t> available_node_set;
+    std::cout << "Computing deficits for graph " << g.id << "..." << std::endl;
+    
+    // OPTIMIZATION 1: Use vectors instead of unordered_map/set for better cache performance
+    std::vector<uint32_t> deficit_counts(g.num_nodes, 0);
+    std::vector<uint32_t> available_nodes;
+    available_nodes.reserve(g.num_nodes);
     
     for (uint32_t i = 0; i < g.num_nodes; ++i) {
         uint32_t node_id = node_degrees[i].first;
@@ -55,12 +63,12 @@ void match_degree_sequence(
         
         if (target_degree > current_degree) {
             uint32_t deficit = target_degree - current_degree;
-            available_node_degrees[node_id] = deficit;
-            available_node_set.insert(node_id);
+            deficit_counts[node_id] = deficit;
+            available_nodes.push_back(node_id);
         }
     }
 
-    if (available_node_degrees.empty()) {
+    if (available_nodes.empty()) {
         std::cout << "[Graph " << g.id << "]: No nodes need additional edges." << std::endl;
         return;
     }
@@ -69,48 +77,60 @@ void match_degree_sequence(
     std::random_device rd;
     std::mt19937 gen(rd());
 
-    // Use max heap to process largest deficits first (like Python version)
-    auto heap_comparator = [](const NodeDegree& a, const NodeDegree& b) {
-        if (a.degree != b.degree) return a.degree < b.degree; // Max heap
-        return a.node > b.node;
-    };
+    // OPTIMIZATION 2: Pre-allocate neighbor sets and reuse them
+    std::vector<bool> is_neighbor(g.num_nodes, false);
+    std::vector<uint32_t> neighbor_list; // For cleanup
+    neighbor_list.reserve(1000); // Reasonable estimate
     
-    std::priority_queue<NodeDegree, std::vector<NodeDegree>, decltype(heap_comparator)> 
-        max_heap(heap_comparator);
-
-    for (const auto& pair : available_node_degrees) {
-        max_heap.emplace(NodeDegree{pair.first, static_cast<int32_t>(pair.second)});
-    }
+    std::vector<uint32_t> available_non_neighbors;
+    available_non_neighbors.reserve(available_nodes.size());
 
     uint32_t nodes_processed = 0;
 
+    // OPTIMIZATION 3: Process nodes in deficit order without heap
+    // Sort available nodes by deficit (descending)
+    std::sort(available_nodes.begin(), available_nodes.end(), 
+              [&](uint32_t a, uint32_t b) { 
+                  return deficit_counts[a] > deficit_counts[b]; 
+              });
+
     // Main algorithm loop - optimized version
-    while (!max_heap.empty() && !available_node_set.empty()) {
-        NodeDegree current = max_heap.top();
-        max_heap.pop();
+    std::cout << "Starting degree sequence matching for graph " << g.id << "..." << std::endl;
+    
+    // OPTIMIZATION 4: Use iterator-based removal instead of set operations
+    auto available_end = available_nodes.end();
+    
+    for (auto it = available_nodes.begin(); it != available_end; ) {
+        uint32_t available_node = *it;
         
-        uint32_t available_node = current.node;
-        
-        // Check if node is still available
-        if (available_node_set.find(available_node) == available_node_set.end()) {
+        // Skip if node no longer has deficit
+        if (deficit_counts[available_node] == 0) {
+            ++it;
             continue;
         }
         
-        uint32_t avail_degree = available_node_degrees[available_node];
+        uint32_t avail_degree = deficit_counts[available_node];
 
-        // Get current neighbors efficiently
-        std::unordered_set<uint32_t> neighbors;
+        // OPTIMIZATION 5: Fast neighbor marking using boolean array
+        neighbor_list.clear();
         for (uint32_t idx = g.row_ptr[available_node]; idx < g.row_ptr[available_node + 1]; ++idx) {
-            neighbors.insert(g.col_idx[idx]);
+            uint32_t neighbor = g.col_idx[idx];
+            if (!is_neighbor[neighbor]) {
+                is_neighbor[neighbor] = true;
+                neighbor_list.push_back(neighbor);
+            }
         }
-        neighbors.insert(available_node); // Add self to avoid self-loops
+        // Mark self to avoid self-loops
+        if (!is_neighbor[available_node]) {
+            is_neighbor[available_node] = true;
+            neighbor_list.push_back(available_node);
+        }
 
-        // Build available non-neighbors from available_node_set
-        std::vector<uint32_t> available_non_neighbors;
-        available_non_neighbors.reserve(available_node_set.size());
-        
-        for (uint32_t candidate : available_node_set) {
-            if (neighbors.find(candidate) == neighbors.end()) {
+        // OPTIMIZATION 6: Build available non-neighbors efficiently
+        available_non_neighbors.clear();
+        for (auto it2 = available_nodes.begin(); it2 != available_end; ++it2) {
+            uint32_t candidate = *it2;
+            if (deficit_counts[candidate] > 0 && !is_neighbor[candidate]) {
                 available_non_neighbors.push_back(candidate);
             }
         }
@@ -118,9 +138,7 @@ void match_degree_sequence(
         uint32_t avail_k = std::min(avail_degree, static_cast<uint32_t>(available_non_neighbors.size()));
         
         // Make avail_k connections using efficient random selection
-        for (uint32_t i = 0; i < avail_k; ++i) {
-            if (available_non_neighbors.empty()) break;
-            
+        for (uint32_t i = 0; i < avail_k && !available_non_neighbors.empty(); ++i) {
             // Use swap-and-pop for efficient random selection
             std::uniform_int_distribution<size_t> dist(0, available_non_neighbors.size() - 1);
             size_t random_index = dist(gen);
@@ -136,29 +154,29 @@ void match_degree_sequence(
             edges_added++;
 
             // Update edge_end's deficit
-            available_node_degrees[edge_end]--;
-            if (available_node_degrees[edge_end] == 0) {
-                available_node_set.erase(edge_end);
-                available_node_degrees.erase(edge_end);
-            } 
-
-            // Add edge_end to heap if it still has a deficit
-            else {
-                // Add updated node back to heap
-                max_heap.emplace(NodeDegree{edge_end, 
-                    static_cast<int32_t>(available_node_degrees[edge_end])});
-            }
+            deficit_counts[edge_end]--;
         }
 
-        // Remove processed node
-        available_node_set.erase(available_node);
-        available_node_degrees.erase(available_node);
+        // OPTIMIZATION 7: Clean up neighbor markings efficiently
+        for (uint32_t neighbor : neighbor_list) {
+            is_neighbor[neighbor] = false;
+        }
+
+        // Mark this node as processed
+        deficit_counts[available_node] = 0;
         
         nodes_processed++;
         if (nodes_processed % 1000 == 0) {
+            // Count remaining nodes with deficits
+            uint32_t remaining = 0;
+            for (uint32_t node : available_nodes) {
+                if (deficit_counts[node] > 0) remaining++;
+            }
             std::cout << "Nodes processed: " << nodes_processed 
-                      << ", Available nodes: " << available_node_set.size() << std::endl;
+                      << ", Remaining nodes with deficits: " << remaining << std::endl;
         }
+        
+        ++it;
     }
 
     std::cout << "[Graph " << g.id << "]: Number of edges added: " << edges_added << std::endl;
