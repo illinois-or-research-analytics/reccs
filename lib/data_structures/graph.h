@@ -94,6 +94,14 @@ struct Graph {
         if (node >= num_nodes) return 0;
         return row_ptr[node + 1] - row_ptr[node];
     }
+
+    // Get neighbors of a node
+    std::vector<uint32_t> get_neighbors(uint32_t node) const {
+        if (node >= num_nodes) return {};
+        uint32_t start = row_ptr[node];
+        uint32_t end = row_ptr[node + 1];
+        return std::vector<uint32_t>(col_idx.begin() + start, col_idx.begin() + end);
+    }
 };
 
 // Sort adjacency lists in parallel

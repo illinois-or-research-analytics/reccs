@@ -217,7 +217,16 @@ public:
                             << " missing nodes" << std::endl;
             }
             
-            if (nodes.empty()) continue;
+            if (nodes.empty() && missing_nodes.empty()) {
+                std::cerr << "Skipping empty cluster " << clustering.cluster_ids[cluster_idx] 
+                          << " (index " << cluster_idx << ")" << std::endl;
+                continue;  // Skip empty clusters
+            }
+
+            if (nodes.empty() && !missing_nodes.empty()) {
+                std::cerr << "Warning: Cluster " << clustering.cluster_ids[cluster_idx] 
+                          << " has no nodes but has missing nodes" << std::endl;
+            }
             
             // Extract subgraph for this cluster
             auto subgraph = extract_subgraph(graph, nodes, missing_nodes);
