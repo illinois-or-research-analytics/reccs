@@ -6,7 +6,6 @@ Usage:
     python gen_SBM_degseq_hybrid.py -f <current_edges> -c <clustering> -ef <empirical_edges> -o <output_dir> [-j <threads>] [-v]
 """
 
-import json
 import os
 import queue
 import threading
@@ -293,6 +292,7 @@ def main(
         # Step 7: Get probs matrix for remaining edges (ORIGINAL LOGIC)
         logger("Computing probability matrix for remaining edges...")
         probs = emp_probs - sbm_wc_probs
+
         # Set negative values to 0
         probs.data[probs.data < 0] = 0
         
