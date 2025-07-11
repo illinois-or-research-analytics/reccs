@@ -23,6 +23,7 @@
 
 #include "../lib/algorithm/enforce_mincut.h"
 #include "../lib/algorithm/deg_seq_matching.h"
+#include "../lib/algorithm/deg_seq_matching_v2.h"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -40,6 +41,7 @@ void print_usage(const char* program_name) {
     std::cerr << "  -v                Verbose mode: print detailed progress information" << std::endl;
     std::cerr << "  -o <output_file>  Output file (default: 'output.tsv')" << std::endl;
     std::cerr << "  -h, --help        Show this help message and exit" << std::endl;
+    std::cerr << "  --v2              Use V2 degree sequence fitting with SBM." << std::endl;
     std::cerr << std::endl;
     std::cerr << "Normal mode specific options:" << std::endl;
     std::cerr << "  <edgelist.tsv>                   Input graph edgelist file" << std::endl;
@@ -113,6 +115,7 @@ int main(int argc, char** argv) {
     int num_threads = std::thread::hardware_concurrency();
     bool verbose = false;
     bool checkpoint_mode = false;
+    bool use_v2 = false;  // Added V2 flag
     CheckpointArgs checkpoint_args;
     
     // Check if first argument is --checkpoint
@@ -124,6 +127,8 @@ int main(int argc, char** argv) {
             std::string arg = argv[i];
             if (arg == "-v") {
                 verbose = true;
+            } else if (arg == "--v2") {
+                use_v2 = true;
             } else if (arg == "-t" && i + 1 < argc) {
                 num_threads = std::stoi(argv[++i]);
             } else if (arg == "-o" && i + 1 < argc) {
@@ -215,6 +220,8 @@ int main(int argc, char** argv) {
             std::string arg = argv[i];
             if (arg == "-v") {
                 verbose = true;
+            } else if (arg == "--v2") {
+                use_v2 = true;
             } else if (arg == "-t" && i + 1 < argc) {
                 num_threads = std::stoi(argv[++i]);
             } else if (arg == "-c" && i + 1 < argc) {
@@ -248,6 +255,7 @@ int main(int argc, char** argv) {
     std::string unclustered_sbm_graph_path;
     std::string requirements_filename;
     std::string degseq_filename;
+    std::string temp_dir;  // Store temp_dir for V2 matcher
     
     if (checkpoint_mode) {
         if (verbose) {
@@ -260,6 +268,11 @@ int main(int argc, char** argv) {
         requirements_filename = checkpoint_args.requirements_path;
         degseq_filename = checkpoint_args.degseq_path;
         
+        // Create temp directory for V2 matcher if needed
+        if (use_v2) {
+            temp_dir = "temp_v2_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+        }
+        
     } else {
         // Normal mode - run orchestrator
         if (verbose) {
@@ -270,7 +283,7 @@ int main(int argc, char** argv) {
         if (verbose) {
             std::cout << "Creating temporary directory for intermediate files..." << std::endl;
         }
-        std::string temp_dir = "temp" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+        temp_dir = "temp" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
 
         // Remove existing temp directory if it exists
         if (fs::exists(temp_dir)) {
@@ -409,11 +422,19 @@ int main(int argc, char** argv) {
     // Now add edges using internal indices
     add_edges_batch(clustered_sbm_graph, newly_added_edges);
 
-    // Perform degree sequence matching on the entire clustered SBM graph
-    if (verbose) {
-        std::cout << "Performing degree sequence matching on the entire clustered SBM graph..." << std::endl;
+    // SIMPLE SWITCH: Use V2 or V1 degree sequence matching
+    if (use_v2) {
+        if (verbose) {
+            std::cout << "Performing SBM-based degree sequence matching (V2)..." << std::endl;
+        }
+        match_degree_sequence_v2(clustered_sbm_graph, temp_dir + "/non_singleton_edges.tsv", 
+                                 temp_dir + "/non_singleton_clusters.tsv", temp_dir + "/sbm_output/");
+    } else {
+        if (verbose) {
+            std::cout << "Performing simple degree sequence matching (V1)..." << std::endl;
+        }
+        match_degree_sequence(clustered_sbm_graph, reference_degree_sequence);
     }
-    match_degree_sequence(clustered_sbm_graph, reference_degree_sequence);
 
     // Write the modified clustered SBM graph to a temporary file
     std::string temp_clustered_path = "temp_clustered_modified.tsv";

@@ -85,6 +85,7 @@ void match_degree_sequence(
     uint32_t nodes_processed = 0;
 
     // Main algorithm loop - optimized version
+    std::cout << "[Graph " << g.id << "]: Starting degree sequence matching..." << std::endl;
     while (!max_heap.empty() && !available_node_set.empty()) {
         NodeDegree current = max_heap.top();
         max_heap.pop();
@@ -99,7 +100,10 @@ void match_degree_sequence(
         uint32_t avail_degree = available_node_degrees[available_node];
 
         // Get current neighbors efficiently
-        std::unordered_set<uint32_t> neighbors = g.get_neighbors(available_node);
+        std::unordered_set<uint32_t> neighbors;
+        for (uint32_t idx = g.row_ptr[available_node]; idx < g.row_ptr[available_node + 1]; ++idx) {
+            neighbors.insert(g.col_idx[idx]);
+        }
         neighbors.insert(available_node); // Add self to avoid self-loops
 
         // Build available non-neighbors from available_node_set
