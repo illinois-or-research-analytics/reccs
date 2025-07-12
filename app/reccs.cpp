@@ -9,6 +9,7 @@
 #include "../lib/data_structures/graph.h"
 #include "../lib/data_structures/clustering.h"
 #include "../lib/data_structures/graph_task_queue.h"
+#include "../lib/data_structures/graph_task_queue_with_degrees.h" // Modified include
 #include "../lib/io/g_io.h"
 #include "../lib/io/cluster_io.h"
 #include "../lib/io/requirements_io.h"
@@ -17,11 +18,16 @@
 #include "../lib/utils/edge_extractor.h"
 #include "../lib/utils/statics.h"
 
-//#include "../lib/algorithm/enforce_degree_conn.h"
+// Include the original algorithms
 #include "../lib/algorithm/enforce_min_degree.h"
 #include "../lib/algorithm/enforce_connectivity.h"
-
 #include "../lib/algorithm/enforce_mincut.h"
+
+// Include the new degree-aware algorithms
+#include "../lib/algorithm/enforce_min_degree_with_budget.h"
+#include "../lib/algorithm/enforce_connectivity_with_budget.h"
+#include "../lib/algorithm/enforce_mincut_with_budget.h"
+
 #include "../lib/algorithm/deg_seq_matching.h"
 #include "../lib/algorithm/deg_seq_matching_v2.h"
 
@@ -37,14 +43,16 @@ void print_usage(const char* program_name) {
     std::cerr << std::endl;
     std::cerr << "Common options:" << std::endl;
     std::cerr << "  -c <clusters.tsv> Load clusters from TSV file (required)" << std::endl;
+    std::cerr << "  -e <empirical.tsv> Load empirical graph for degree budget tracking" << std::endl;
     std::cerr << "  -t <num_threads>  Number of threads to use (default: hardware concurrency)" << std::endl;
     std::cerr << "  -v                Verbose mode: print detailed progress information" << std::endl;
     std::cerr << "  -o <output_file>  Output file (default: 'output.tsv')" << std::endl;
     std::cerr << "  -h, --help        Show this help message and exit" << std::endl;
     std::cerr << "  --v2              Use V2 degree sequence fitting with SBM." << std::endl;
+    std::cerr << "  --no-budget       Disable degree budget tracking (use original algorithms)" << std::endl;
     std::cerr << std::endl;
     std::cerr << "Normal mode specific options:" << std::endl;
-    std::cerr << "  <edgelist.tsv>                   Input graph edgelist file" << std::endl;
+    std::cerr << "  <edgelist.tsv>                   Input graph edgelist file (used as empirical graph)" << std::endl;
     std::cerr << std::endl;
     std::cerr << "Checkpoint mode specific options:" << std::endl;
     std::cerr << "  --checkpoint                     Enable checkpoint mode (skip orchestrator)" << std::endl;
@@ -54,11 +62,14 @@ void print_usage(const char* program_name) {
     std::cerr << "  --degseq <path>                 Path to degree sequence JSON file" << std::endl;
     std::cerr << std::endl;
     std::cerr << "Examples:" << std::endl;
-    std::cerr << "  Normal mode:" << std::endl;
+    std::cerr << "  Normal mode with degree budget:" << std::endl;
     std::cerr << "    " << program_name << " graph.tsv -c clusters.tsv -t 8 -v -o output.tsv" << std::endl;
     std::cerr << std::endl;
-    std::cerr << "  Checkpoint mode:" << std::endl;
-    std::cerr << "    " << program_name << " --checkpoint -c clusters.tsv \\" << std::endl;
+    std::cerr << "  Normal mode without degree budget:" << std::endl;
+    std::cerr << "    " << program_name << " graph.tsv -c clusters.tsv --no-budget -t 8 -v -o output.tsv" << std::endl;
+    std::cerr << std::endl;
+    std::cerr << "  Checkpoint mode with separate empirical graph:" << std::endl;
+    std::cerr << "    " << program_name << " --checkpoint -c clusters.tsv -e empirical.tsv \\" << std::endl;
     std::cerr << "      --clustered-sbm clustered.tsv --unclustered-sbm unclustered.tsv \\" << std::endl;
     std::cerr << "      --requirements requirements.csv --degseq degseq.json -v -o output.tsv" << std::endl;
 }
@@ -102,6 +113,15 @@ struct CheckpointArgs {
     }
 };
 
+// Helper function to create node mappings
+std::unordered_map<uint64_t, uint32_t> create_node_mapping(const Graph& graph) {
+    std::unordered_map<uint64_t, uint32_t> mapping;
+    for (uint32_t i = 0; i < graph.id_map.size(); ++i) {
+        mapping[graph.id_map[i]] = i;
+    }
+    return mapping;
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) {
         print_usage(argv[0]);
@@ -110,12 +130,14 @@ int main(int argc, char** argv) {
     
     // Parse command line arguments
     std::string graph_filename;
+    std::string empirical_graph_filename; // New: separate empirical graph
     std::string cluster_filename;
     std::string output_file = "output.tsv";
     int num_threads = std::thread::hardware_concurrency();
     bool verbose = false;
     bool checkpoint_mode = false;
-    bool use_v2 = false;  // Added V2 flag
+    bool use_v2 = false;
+    bool disable_budget = false; // New: option to disable budget tracking
     CheckpointArgs checkpoint_args;
     
     // Check if first argument is --checkpoint
@@ -129,12 +151,16 @@ int main(int argc, char** argv) {
                 verbose = true;
             } else if (arg == "--v2") {
                 use_v2 = true;
+            } else if (arg == "--no-budget") {
+                disable_budget = true;
             } else if (arg == "-t" && i + 1 < argc) {
                 num_threads = std::stoi(argv[++i]);
             } else if (arg == "-o" && i + 1 < argc) {
                 output_file = argv[++i];
             } else if (arg == "-c" && i + 1 < argc) {
                 cluster_filename = argv[++i];
+            } else if (arg == "-e" && i + 1 < argc) {
+                empirical_graph_filename = argv[++i];
             } else if (arg == "--clustered-sbm" && i + 1 < argc) {
                 checkpoint_args.clustered_sbm_path = argv[++i];
             } else if (arg == "--unclustered-sbm" && i + 1 < argc) {
@@ -153,18 +179,10 @@ int main(int argc, char** argv) {
             }
         }
         
-        // Validate checkpoint arguments (including degseq now)
-        if (checkpoint_args.clustered_sbm_path.empty() || 
-            checkpoint_args.unclustered_sbm_path.empty() ||
-            checkpoint_args.requirements_path.empty() ||
-            checkpoint_args.degseq_path.empty()) {
-            std::cerr << "Error: In checkpoint mode, clustered-sbm, unclustered-sbm, requirements, and degseq arguments are required." << std::endl;
-            std::vector<std::string> missing;
-            if (checkpoint_args.clustered_sbm_path.empty()) missing.push_back("--clustered-sbm");
-            if (checkpoint_args.unclustered_sbm_path.empty()) missing.push_back("--unclustered-sbm");
-            if (checkpoint_args.requirements_path.empty()) missing.push_back("--requirements");
-            if (checkpoint_args.degseq_path.empty()) missing.push_back("--degseq");
-            
+        // Validate checkpoint arguments
+        if (!checkpoint_args.are_all_provided()) {
+            std::cerr << "Error: In checkpoint mode, all checkpoint arguments are required." << std::endl;
+            auto missing = checkpoint_args.get_missing_args();
             std::cerr << "Missing arguments: ";
             for (size_t i = 0; i < missing.size(); ++i) {
                 std::cerr << missing[i];
@@ -182,32 +200,24 @@ int main(int argc, char** argv) {
             return 1;
         }
         
-        // Check if required checkpoint files exist
-        std::vector<std::string> files_to_check = {
-            checkpoint_args.clustered_sbm_path,
-            checkpoint_args.unclustered_sbm_path,
-            checkpoint_args.requirements_path,
-            checkpoint_args.degseq_path
-        };
-        
-        std::vector<std::string> missing_files;
-        for (const auto& file : files_to_check) {
-            if (!fs::exists(file)) {
-                missing_files.push_back(file);
-            }
-        }
-        
-        if (!missing_files.empty()) {
+        // Check if files exist
+        if (!checkpoint_args.files_exist()) {
             std::cerr << "Error: Some checkpoint files do not exist:" << std::endl;
-            for (const auto& file : missing_files) {
+            auto missing = checkpoint_args.get_missing_files();
+            for (const auto& file : missing) {
                 std::cerr << "  " << file << std::endl;
             }
             return 1;
         }
         
-        // Check if cluster file exists
         if (!fs::exists(cluster_filename)) {
             std::cerr << "Error: Cluster file does not exist: " << cluster_filename << std::endl;
+            return 1;
+        }
+        
+        // If empirical graph specified, check it exists
+        if (!empirical_graph_filename.empty() && !fs::exists(empirical_graph_filename)) {
+            std::cerr << "Error: Empirical graph file does not exist: " << empirical_graph_filename << std::endl;
             return 1;
         }
         
@@ -222,10 +232,14 @@ int main(int argc, char** argv) {
                 verbose = true;
             } else if (arg == "--v2") {
                 use_v2 = true;
+            } else if (arg == "--no-budget") {
+                disable_budget = true;
             } else if (arg == "-t" && i + 1 < argc) {
                 num_threads = std::stoi(argv[++i]);
             } else if (arg == "-c" && i + 1 < argc) {
                 cluster_filename = argv[++i];
+            } else if (arg == "-e" && i + 1 < argc) {
+                empirical_graph_filename = argv[++i];
             } else if (arg == "-o" && i + 1 < argc) {
                 output_file = argv[++i];
             } else if (arg == "-h" || arg == "--help") {
@@ -246,6 +260,11 @@ int main(int argc, char** argv) {
         }
     }
     
+    // In normal mode, if no separate empirical graph specified, use the input graph
+    if (!checkpoint_mode && empirical_graph_filename.empty()) {
+        empirical_graph_filename = graph_filename;
+    }
+    
     // Set OpenMP threads
     omp_set_num_threads(num_threads);
     
@@ -255,20 +274,18 @@ int main(int argc, char** argv) {
     std::string unclustered_sbm_graph_path;
     std::string requirements_filename;
     std::string degseq_filename;
-    std::string temp_dir;  // Store temp_dir for V2 matcher
+    std::string temp_dir;
     
     if (checkpoint_mode) {
         if (verbose) {
             std::cout << "Running in checkpoint mode - skipping orchestrator..." << std::endl;
         }
         
-        // Use checkpoint file paths directly
         clustered_sbm_graph_path = checkpoint_args.clustered_sbm_path;
         unclustered_sbm_graph_path = checkpoint_args.unclustered_sbm_path;
         requirements_filename = checkpoint_args.requirements_path;
         degseq_filename = checkpoint_args.degseq_path;
         
-        // Create temp directory for V2 matcher if needed
         if (use_v2) {
             temp_dir = "temp_v2_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
         }
@@ -279,20 +296,17 @@ int main(int argc, char** argv) {
             std::cout << "Running orchestrator..." << std::endl;
         }
         
-        // Create a temp directory for intermediate files
         if (verbose) {
             std::cout << "Creating temporary directory for intermediate files..." << std::endl;
         }
         temp_dir = "temp" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
 
-        // Remove existing temp directory if it exists
         if (fs::exists(temp_dir)) {
             fs::remove_all(temp_dir);
         }
 
         fs::create_directories(temp_dir);
         
-        // Create and run the orchestrator
         Orchestrator orchestrator(graph_filename, cluster_filename, temp_dir, verbose);
         int result = orchestrator.run();
         
@@ -301,25 +315,22 @@ int main(int argc, char** argv) {
             return result;
         }
         
-        // Set paths to orchestrator-generated files
         clustered_sbm_graph_path = temp_dir + "/clustered_sbm/syn_sbm.tsv";
         unclustered_sbm_graph_path = temp_dir + "/unclustered_sbm/syn_sbm.tsv";
         requirements_filename = temp_dir + "/clustered_stats.csv";
         degseq_filename = temp_dir + "/reference_degree_sequence.json";
     }
     
-    // Load the clustered SBM graph and clustering
+    // Load the clustered SBM graph
     if (verbose) {
         std::cout << "Loading clustered SBM graph and clustering..." << std::endl;
     }
     
-    // Check if files exist
     if (!fs::exists(clustered_sbm_graph_path)) {
         std::cerr << "Error: Clustered SBM graph file not found at: " << clustered_sbm_graph_path << std::endl;
         return 1;
     }
     
-    // Load the clustered SBM graph with node mapping
     Graph clustered_sbm_graph = load_undirected_tsv_edgelist_parallel(
         clustered_sbm_graph_path, num_threads, verbose);
 
@@ -327,14 +338,47 @@ int main(int argc, char** argv) {
         std::cout << "Successfully loaded clustered SBM graph." << std::endl;
     }
 
-    // Load the clustering from the specified file
+    // Load the clustering
     Clustering clustering = load_clustering(cluster_filename, clustered_sbm_graph, verbose);
 
     if (verbose) {
         std::cout << "Successfully loaded clustering with " << clustering.size() << " clusters." << std::endl;
     }
 
-    // Load the cluster requirements
+    // Load empirical graph for degree budget tracking (if not disabled)
+    std::shared_ptr<Graph> empirical_graph = nullptr;
+    std::unordered_map<uint64_t, uint32_t> emp_node_mapping;
+    std::unordered_map<uint64_t, uint32_t> syn_node_mapping;
+    
+    if (!disable_budget && !empirical_graph_filename.empty()) {
+        if (verbose) {
+            std::cout << "Loading empirical graph for degree budget tracking: " << empirical_graph_filename << std::endl;
+        }
+        
+        if (!fs::exists(empirical_graph_filename)) {
+            std::cerr << "Error: Empirical graph file not found: " << empirical_graph_filename << std::endl;
+            return 1;
+        }
+        
+        auto emp_graph = load_undirected_tsv_edgelist_parallel(empirical_graph_filename, num_threads, verbose);
+        empirical_graph = std::make_shared<Graph>(std::move(emp_graph));
+        
+        // Create node mappings
+        emp_node_mapping = create_node_mapping(*empirical_graph);
+        syn_node_mapping = create_node_mapping(clustered_sbm_graph);
+        
+        if (verbose) {
+            std::cout << "Empirical graph loaded. Nodes: " << empirical_graph->num_nodes 
+                      << ", Edges: " << empirical_graph->num_edges << std::endl;
+            std::cout << "Created node mappings: " << emp_node_mapping.size() 
+                      << " empirical, " << syn_node_mapping.size() << " synthetic" << std::endl;
+        }
+    } else if (!disable_budget) {
+        std::cout << "Warning: No empirical graph specified. Degree budget tracking disabled." << std::endl;
+        disable_budget = true;
+    }
+
+    // Load requirements and degree sequence
     if (verbose) {
         std::cout << "Loading cluster requirements from: " << requirements_filename << std::endl;
     }
@@ -345,7 +389,6 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Load the reference degree sequence
     std::shared_ptr<const std::vector<uint32_t>> reference_degree_sequence;
     
     if (verbose) {
@@ -358,7 +401,6 @@ int main(int argc, char** argv) {
         return 1;
     }
     
-    // Convert JSON array to vector<uint32_t> and wrap in shared_ptr
     auto sequence = std::make_shared<const std::vector<uint32_t>>(
         degseq_json.get<std::vector<uint32_t>>());
     reference_degree_sequence = sequence;
@@ -368,61 +410,131 @@ int main(int argc, char** argv) {
                   << reference_degree_sequence->size() << " degrees." << std::endl;
     }
 
-    // Print loaded requirements statistics
     if (verbose) {
         requirements_loader.print_statistics();
     }
 
-    // Load the graph task queue
-    GraphTaskQueue task_queue;
-
-    // Set up the task functions with three separate functions
-    task_queue.set_task_functions(
-        // MIN_DEG_ENFORCE - Minimum degree enforcement
-        [](Graph& g, uint32_t min_degree) {
-            enforce_min_degree(g, min_degree);
-        },
-        
-        // CC_STITCHING - Connectivity enforcement 
-        [](Graph& g, uint32_t min_degree) {
-            enforce_connectivity(g, min_degree);
-        },
-        
-        // WCC_STITCHING - Mincut enforcement
-        [](Graph& g, uint32_t min_degree) {
-            enforce_mincut(g, min_degree);
+    // Choose task queue type based on budget setting
+    if (disable_budget) {
+        if (verbose) {
+            std::cout << "Using standard task queue (no degree budget tracking)..." << std::endl;
         }
-    );
+        
+        // Use original task queue
+        GraphTaskQueue task_queue;
 
-    // Initialize queue
-    task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader);
-    
-    if (verbose) {
-        std::cout << "Initialized task queue with " << task_queue.queue_size() << " tasks." << std::endl;
+        task_queue.set_task_functions(
+            [](Graph& g, uint32_t min_degree) {
+                enforce_min_degree(g, min_degree);
+            },
+            [](Graph& g, uint32_t min_degree) {
+                enforce_connectivity(g, min_degree);
+            },
+            [](Graph& g, uint32_t min_degree) {
+                enforce_mincut(g, min_degree);
+            }
+        );
+
+        task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader);
+        
+        if (verbose) {
+            std::cout << "Initialized standard task queue with " << task_queue.queue_size() << " tasks." << std::endl;
+        }
+
+        task_queue.process_all_tasks();
+
+        auto completed_subgraphs = task_queue.get_completed_subgraphs();
+        if (verbose) {
+            std::cout << "Processed " << completed_subgraphs.size() << " subgraphs." << std::endl;
+        }
+
+        // Continue with edge extraction and final processing...
+        auto newly_added_edges_raw = EdgeExtractor::find_newly_added_edges(
+            clustered_sbm_graph, completed_subgraphs);
+
+        std::vector<std::pair<uint32_t, uint32_t>> newly_added_edges = 
+            EdgeExtractor::get_compressed_newly_added_edges(
+                clustered_sbm_graph, newly_added_edges_raw, verbose);
+
+        add_edges_batch(clustered_sbm_graph, newly_added_edges);
+        
+    } else {
+        if (verbose) {
+            std::cout << "Using degree-aware task queue with budget tracking..." << std::endl;
+        }
+        
+        // Use degree-aware task queue
+        GraphTaskQueueWithDegrees task_queue;
+
+        // Initialize degree manager
+        task_queue.initialize_degree_manager(
+            empirical_graph,
+            std::make_shared<Graph>(clustered_sbm_graph), // Create shared_ptr
+            emp_node_mapping,
+            syn_node_mapping
+        );
+
+        // Set degree-aware task functions
+        task_queue.set_task_functions(
+            [](GraphTaskWithDegrees& task) {
+                enforce_min_degree_with_budget(task);
+            },
+            [](GraphTaskWithDegrees& task) {
+                enforce_connectivity_with_budget(task);
+            },
+            [](GraphTaskWithDegrees& task) {
+                enforce_mincut_with_budget(task);
+            }
+        );
+
+        task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader);
+        
+        if (verbose) {
+            std::cout << "Initialized degree-aware task queue with " << task_queue.queue_size() << " tasks." << std::endl;
+        }
+
+        // Print initial degree budget statistics
+        auto initial_stats = task_queue.get_degree_manager()->get_stats();
+        if (verbose) {
+            std::cout << "\n=== INITIAL DEGREE BUDGET STATISTICS ===" << std::endl;
+            std::cout << "Available nodes: " << initial_stats.total_available_nodes << std::endl;
+            std::cout << "Total degree budget: " << initial_stats.total_available_degrees << std::endl;
+            std::cout << "Average budget per node: " << initial_stats.avg_available_degree << std::endl;
+        }
+
+        task_queue.process_all_tasks();
+
+        // Print final degree budget statistics
+        auto final_stats = task_queue.get_degree_manager()->get_stats();
+        if (verbose) {
+            std::cout << "\n=== FINAL DEGREE BUDGET STATISTICS ===" << std::endl;
+            std::cout << "Remaining available nodes: " << final_stats.total_available_nodes << std::endl;
+            std::cout << "Remaining degree budget: " << final_stats.total_available_degrees << std::endl;
+            if (initial_stats.total_available_degrees > 0) {
+                double utilization = 100.0 * (initial_stats.total_available_degrees - final_stats.total_available_degrees) / 
+                                    initial_stats.total_available_degrees;
+                std::cout << "Budget utilization: " << std::fixed << std::setprecision(1) 
+                          << utilization << "%" << std::endl;
+            }
+        }
+
+        auto completed_subgraphs = task_queue.get_completed_subgraphs();
+        if (verbose) {
+            std::cout << "Processed " << completed_subgraphs.size() << " subgraphs." << std::endl;
+        }
+
+        // Continue with edge extraction and final processing...
+        auto newly_added_edges_raw = EdgeExtractor::find_newly_added_edges(
+            clustered_sbm_graph, completed_subgraphs);
+
+        std::vector<std::pair<uint32_t, uint32_t>> newly_added_edges = 
+            EdgeExtractor::get_compressed_newly_added_edges(
+                clustered_sbm_graph, newly_added_edges_raw, verbose);
+
+        add_edges_batch(clustered_sbm_graph, newly_added_edges);
     }
 
-    // Process all tasks
-    task_queue.process_all_tasks();
-
-    // Retrieve completed subgraphs
-    auto completed_subgraphs = task_queue.get_completed_subgraphs();
-    if (verbose) {
-        std::cout << "Processed " << completed_subgraphs.size() << " subgraphs." << std::endl;
-    }
-
-    // Fetch newly added edges (these use original node IDs)
-    auto newly_added_edges_raw = EdgeExtractor::find_newly_added_edges(
-        clustered_sbm_graph, completed_subgraphs);
-
-    // Convert original node IDs back to internal indices
-    std::vector<std::pair<uint32_t, uint32_t>> newly_added_edges = 
-        EdgeExtractor::get_compressed_newly_added_edges(
-            clustered_sbm_graph, newly_added_edges_raw, verbose);
-
-    // Now add edges using internal indices
-    add_edges_batch(clustered_sbm_graph, newly_added_edges);
-
-    // SIMPLE SWITCH: Use V2 or V1 degree sequence matching
+    // Degree sequence matching (common for both paths)
     if (use_v2) {
         if (verbose) {
             std::cout << "Performing SBM-based degree sequence matching (V2)..." << std::endl;
@@ -436,37 +548,32 @@ int main(int argc, char** argv) {
         match_degree_sequence(clustered_sbm_graph, reference_degree_sequence);
     }
 
-    // Write the modified clustered SBM graph to a temporary file
+    // Write final output
     std::string temp_clustered_path = "temp_clustered_modified.tsv";
     if (verbose) {
         std::cout << "Writing modified clustered SBM graph to temporary file: " << temp_clustered_path << std::endl;
     }
     save_graph_edgelist(temp_clustered_path, clustered_sbm_graph, verbose);
 
-    // Concatenate the modified clustered and unclustered SBM graphs
     if (verbose) {
         std::cout << "Concatenating modified clustered and unclustered SBM graphs to: " << output_file << std::endl;
     }
     
     std::ofstream output_stream(output_file);
     
-    // Write modified clustered SBM graph
     std::ifstream clustered_in(temp_clustered_path);
     output_stream << clustered_in.rdbuf();
     clustered_in.close();
     
-    // Write unclustered SBM graph
     std::ifstream unclustered_in(unclustered_sbm_graph_path);
     output_stream << unclustered_in.rdbuf();
     unclustered_in.close();
     
     output_stream.close();
     
-    // Clean up temporary file
     fs::remove(temp_clustered_path);
 
     if (verbose) {
-        // Print timing information
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
         std::cout << "Total execution time: " << duration << " seconds" << std::endl;
