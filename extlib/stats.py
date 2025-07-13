@@ -107,6 +107,23 @@ def main(
     
     # Convert IntangibleSubgraphs to actual graph objects
     clusters = [cluster.realize(global_graph) for cluster in clusters]
+
+    # Compute degree sequence for each cluster
+    if verbose:
+        print(f"Computing degree sequence for {len(clusters)} clusters...")
+        degree_start_time = time.time()
+
+    degree_sequences = {cluster_id: cluster.degree_sequence() for cluster_id, cluster in zip(ids, clusters)}
+
+    # Save degree sequences to JSON file
+    degree_file = os.path.splitext(outfile)[0] + '_degree_sequences.json'
+    with open(degree_file, 'w') as f:
+        json.dump(degree_sequences, f, indent=4)
+    
+    if verbose:
+        degree_time = time.time() - degree_start_time
+        print(f"Degree sequences saved to {degree_file} in {degree_time:.2f} seconds")
+        print("Calculating minimum cuts for each cluster...")
     
     if verbose:
         print("Calculating minimum cuts for each cluster (this may take some time)...")
@@ -148,3 +165,4 @@ def entry_point():
 
 if __name__ == "__main__":
     entry_point()
+    

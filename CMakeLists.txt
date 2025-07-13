@@ -23,15 +23,21 @@ include_directories(
 # Add nlohmann/json
 add_subdirectory(extlib/json)
 
-# Add the executable
-add_executable(reccs app/reccs.cpp)
-
-# Link with OpenMP, nlohmann_json, and TLX
-target_link_libraries(reccs PUBLIC 
+# Create shared library components for common functionality
+# This helps avoid code duplication and ensures both executables use the same libraries
+set(RECCS_LIBRARIES
     OpenMP::OpenMP_CXX 
     nlohmann_json::nlohmann_json
     tlx  # Link against TLX library
 )
+
+# Add the original reccs executable
+add_executable(reccs app/reccs.cpp)
+target_link_libraries(reccs PUBLIC ${RECCS_LIBRARIES})
+
+# Add the new reccspp executable
+add_executable(reccspp app/reccspp.cpp)
+target_link_libraries(reccspp PUBLIC ${RECCS_LIBRARIES})
 
 # Copy extlib directory to build directory
 file(COPY ${CMAKE_SOURCE_DIR}/extlib DESTINATION ${CMAKE_BINARY_DIR})
