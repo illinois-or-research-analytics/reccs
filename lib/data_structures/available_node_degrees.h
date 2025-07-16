@@ -14,29 +14,27 @@
  */
 class AvailableNodeDegreesManager {
 private:
-    // Maps node_id -> available degree budget
-    std::unordered_map<uint64_t, std::atomic<int32_t>> available_degrees;
-    
-    // Fast lookup set of nodes with available degrees > 0
-    std::unordered_set<uint64_t> available_nodes;
-    mutable std::mutex available_nodes_mutex;
+    // Dense storage for available degrees (node_id -> available_budget)
+    std::unique_ptr<std::atomic<int32_t>[]> available_degrees;  // FIXED: Use unique_ptr array
+    size_t available_degrees_size;  // FIXED: Track size separately
+
+    // Reference degree sequence (empirical target degrees)
+    std::shared_ptr<const std::vector<uint32_t>> reference_degrees;
+
+    // Pre-computed available nodes per cluster to avoid repeated intersections
+    std::unordered_map<std::string, std::vector<uint64_t>> cluster_available_cache;
+    mutable std::mutex cache_mutex;
     
     // Reference graphs for degree computation
-    std::shared_ptr<Graph> empirical_graph;
-    std::shared_ptr<Graph> synthetic_graph;
-    
-    // Node mapping between graphs
-    std::unordered_map<uint64_t, uint32_t> emp_node_mapping;
-    std::unordered_map<uint64_t, uint32_t> syn_node_mapping;
+    const Graph* synthetic_graph;
 
 public:
     AvailableNodeDegreesManager(
-        std::shared_ptr<Graph> emp_graph,
-        std::shared_ptr<Graph> syn_graph,
-        const std::unordered_map<uint64_t, uint32_t>& emp_mapping,
-        const std::unordered_map<uint64_t, uint32_t>& syn_mapping)
-        : empirical_graph(emp_graph), synthetic_graph(syn_graph),
-          emp_node_mapping(emp_mapping), syn_node_mapping(syn_mapping) {
+        const Graph& syn_graph,
+        std::shared_ptr<const std::vector<uint32_t>> ref_degrees)
+        : reference_degrees(ref_degrees), synthetic_graph(&syn_graph),
+          available_degrees_size(0) {  // Initialize size to 0
+        
         initialize_available_degrees();
     }
     
@@ -45,48 +43,91 @@ public:
      * Replicates: deg_diff = emp_degrees[c_node] - sbm_degrees[c_node]
      */
     void initialize_available_degrees() {
-        std::lock_guard<std::mutex> lock(available_nodes_mutex);
+        size_t max_nodes = std::max(reference_degrees->size(), synthetic_graph->num_nodes);
         
-        for (const auto& [node_id, emp_node] : emp_node_mapping) {
-            auto syn_it = syn_node_mapping.find(node_id);
-            if (syn_it == syn_node_mapping.end()) continue;
+        // Allocate array of atomics using unique_ptr
+        available_degrees_size = max_nodes;
+        available_degrees = std::make_unique<std::atomic<int32_t>[]>(max_nodes);  // FIXED: Now matches declaration
+        
+        // Initialize all to zero
+        for (size_t i = 0; i < max_nodes; ++i) {
+            available_degrees[i].store(0);
+        }
+
+        size_t positive_degrees = 0;
+        
+        // For each node in the synthetic graph, compute available budget
+        for (uint32_t i = 0; i < synthetic_graph->num_nodes; ++i) {
+            // Get the original node ID
+            uint64_t original_id = synthetic_graph->id_map[i];
             
-            uint32_t syn_node = syn_it->second;
-            
-            // Get degrees from both graphs
-            uint32_t emp_degree = get_degree(*empirical_graph, emp_node);
-            uint32_t syn_degree = get_degree(*synthetic_graph, syn_node);
-            
-            // Calculate available degree budget
-            int32_t deg_diff = static_cast<int32_t>(emp_degree) - static_cast<int32_t>(syn_degree);
-            
-            if (deg_diff > 0) {
-                available_degrees[node_id].store(deg_diff);
-                available_nodes.insert(node_id);
+            // Use original_id as index into reference degrees (assuming dense mapping)
+            if (original_id < reference_degrees->size()) {
+                uint32_t reference_degree = (*reference_degrees)[original_id];
+                uint32_t current_degree = synthetic_graph->get_degree(i);
+                
+                int32_t budget = static_cast<int32_t>(reference_degree) - static_cast<int32_t>(current_degree);
+                
+                if (budget > 0 && original_id < available_degrees_size) {  // FIXED: Use size variable
+                    available_degrees[original_id].store(budget);
+                    positive_degrees++;
+                }
             }
         }
         
-        std::cout << "Initialized " << available_nodes.size() 
-                  << " nodes with available degrees" << std::endl;
+        std::cout << "Initialized " << positive_degrees 
+                  << " nodes with available degree budget from reference sequence" << std::endl;
+    }
+
+    /**
+     * Pre-compute available nodes for each cluster
+     */
+    void precompute_cluster_available_nodes(
+        const std::string& cluster_id,
+        const std::unordered_set<uint64_t>& cluster_nodes) {
+        
+        std::vector<uint64_t> available_nodes;
+        available_nodes.reserve(cluster_nodes.size());
+        
+        for (uint64_t node_id : cluster_nodes) {
+            if (get_available_degree(node_id) > 0) {
+                available_nodes.push_back(node_id);
+            }
+        }
+        
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        cluster_available_cache[cluster_id] = std::move(available_nodes);
+    }
+
+    /**
+     * Get pre-computed available nodes for a cluster
+     */
+    std::vector<uint64_t> get_cluster_available_nodes(const std::string& cluster_id) const {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        auto it = cluster_available_cache.find(cluster_id);
+        return (it != cluster_available_cache.end()) ? it->second : std::vector<uint64_t>{};
     }
     
     /**
-     * Try to consume available degree budget for a node
-     * Returns true if successful, false if insufficient budget
+     * Fast degree lookup - O(1) access
+     */
+    int32_t get_available_degree(uint64_t node_id) const {
+        if (node_id < available_degrees_size) {  // FIXED: Use size variable
+            return available_degrees[node_id].load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    
+    /**
+     * Try to consume degree budget
      */
     bool try_consume_degree(uint64_t node_id, int32_t amount = 1) {
-        auto it = available_degrees.find(node_id);
-        if (it == available_degrees.end()) return false;
+        if (node_id >= available_degrees_size) return false;  // FIXED: Use size variable
         
-        // Atomic compare-and-swap to consume budget
-        int32_t current = it->second.load();
+        int32_t current = available_degrees[node_id].load(std::memory_order_relaxed);
         while (current >= amount) {
-            if (it->second.compare_exchange_weak(current, current - amount)) {
-                // Successfully consumed, check if node should be removed from available set
-                if (current - amount <= 0) {
-                    std::lock_guard<std::mutex> lock(available_nodes_mutex);
-                    available_nodes.erase(node_id);
-                }
+            if (available_degrees[node_id].compare_exchange_weak(
+                current, current - amount, std::memory_order_relaxed)) {
                 return true;
             }
         }
@@ -94,47 +135,48 @@ public:
     }
     
     /**
-     * Get available degree budget for a node
+     * Batch consume multiple degrees
      */
-    int32_t get_available_degree(uint64_t node_id) const {
-        auto it = available_degrees.find(node_id);
-        return (it != available_degrees.end()) ? it->second.load() : 0;
-    }
-    
-    /**
-     * Get set of nodes with available degrees (thread-safe copy)
-     */
-    std::unordered_set<uint64_t> get_available_nodes() const {
-        std::lock_guard<std::mutex> lock(available_nodes_mutex);
-        return available_nodes;  // Copy
-    }
-    
-    /**
-     * Get intersection of available nodes with a given node set
-     * Replicates: available_c_nodes = available_node_set.intersection(nodes)
-     */
-    std::unordered_set<uint64_t> get_available_intersection(
-        const std::unordered_set<uint64_t>& cluster_nodes) const {
-        
-        std::lock_guard<std::mutex> lock(available_nodes_mutex);
-        std::unordered_set<uint64_t> result;
-        
-        for (uint64_t node : cluster_nodes) {
-            if (available_nodes.count(node) > 0) {
-                result.insert(node);
+    bool try_consume_degrees_batch(const std::vector<std::pair<uint64_t, int32_t>>& consumptions) {
+        // First pass: check if all consumptions are possible
+        for (const auto& [node_id, amount] : consumptions) {
+            if (get_available_degree(node_id) < amount) {
+                return false;
             }
         }
-        return result;
+        
+        // Second pass: perform all consumptions
+        for (const auto& [node_id, amount] : consumptions) {
+            if (!try_consume_degree(node_id, amount)) {
+                // Race condition - some other thread consumed budget
+                // This is rare, but we handle it gracefully
+                return false;
+            }
+        }
+        
+        return true;
     }
     
     /**
-     * Remove nodes from available set without consuming degrees
-     * (for when nodes are exhausted through other means)
+     * Update cluster cache after degree changes
      */
-    void remove_from_available(const std::unordered_set<uint64_t>& nodes_to_remove) {
-        std::lock_guard<std::mutex> lock(available_nodes_mutex);
-        for (uint64_t node : nodes_to_remove) {
-            available_nodes.erase(node);
+    void update_cluster_cache(const std::string& cluster_id, 
+                             const std::unordered_set<uint64_t>& cluster_nodes) {
+        std::vector<uint64_t> updated_available;
+        
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex);
+            auto it = cluster_available_cache.find(cluster_id);
+            if (it == cluster_available_cache.end()) return;
+            
+            // Filter out nodes with zero available degrees
+            for (uint64_t node_id : it->second) {
+                if (get_available_degree(node_id) > 0) {
+                    updated_available.push_back(node_id);
+                }
+            }
+            
+            it->second = std::move(updated_available);
         }
     }
     
@@ -148,15 +190,16 @@ public:
     };
     
     AvailableStats get_stats() const {
-        std::lock_guard<std::mutex> lock(available_nodes_mutex);
         AvailableStats stats;
-        stats.total_available_nodes = available_nodes.size();
+        stats.total_available_nodes = 0;
         stats.total_available_degrees = 0;
         
-        for (uint64_t node : available_nodes) {
-            auto it = available_degrees.find(node);
-            if (it != available_degrees.end()) {
-                stats.total_available_degrees += it->second.load();
+        // FIXED: Use size variable and array indexing
+        for (size_t i = 0; i < available_degrees_size; ++i) {
+            int32_t val = available_degrees[i].load(std::memory_order_relaxed);
+            if (val > 0) {
+                stats.total_available_nodes++;
+                stats.total_available_degrees += val;
             }
         }
         
@@ -164,11 +207,6 @@ public:
             static_cast<double>(stats.total_available_degrees) / stats.total_available_nodes : 0.0;
             
         return stats;
-    }
-
-private:
-    uint32_t get_degree(const Graph& g, uint32_t node) const {
-        return g.row_ptr[node + 1] - g.row_ptr[node];
     }
 };
 
@@ -212,40 +250,8 @@ namespace degree_aware_stages {
  */
 std::unordered_set<uint64_t> get_cluster_available_nodes(
     const GraphTaskWithDegrees& task) {
-    return task.degree_manager->get_available_intersection(task.cluster_node_ids);
-}
-
-/**
- * Try to add an edge with degree budget checking
- * Returns true if edge was added and budgets consumed
- */
-bool try_add_edge_with_budget(
-    Graph& g, 
-    uint32_t u, uint32_t v,
-    const GraphTaskWithDegrees& task) {
-    
-    // Convert subgraph indices back to original node IDs
-    uint64_t u_id = g.id_map[u];
-    uint64_t v_id = g.id_map[v];
-    
-    // Check if both nodes have available degree budget
-    bool u_available = task.degree_manager->get_available_degree(u_id) > 0;
-    bool v_available = task.degree_manager->get_available_degree(v_id) > 0;
-    
-    // Add the edge
-    std::vector<std::pair<uint32_t, uint32_t>> edges = {{u, v}};
-    add_edges_batch(g, edges);
-    
-    // Consume budgets if available
-    bool degree_corrected = false;
-    if (u_available && task.degree_manager->try_consume_degree(u_id)) {
-        degree_corrected = true;
-    }
-    if (v_available && task.degree_manager->try_consume_degree(v_id)) {
-        degree_corrected = true;
-    }
-    
-    return degree_corrected;
+    return std::unordered_set<uint64_t>(task.degree_manager->get_cluster_available_nodes(task.cluster_id).begin(),
+                                       task.degree_manager->get_cluster_available_nodes(task.cluster_id).end());
 }
 
 /**
@@ -259,29 +265,29 @@ uint32_t select_edge_endpoint(
     
     if (candidates.empty()) return UINT32_MAX;
     
-    // Separate candidates into those with/without available degrees
-    std::vector<uint32_t> available_candidates;
-    std::vector<uint32_t> other_candidates;
+    // Get cached available nodes
+    auto cluster_available_nodes = task.degree_manager->get_cluster_available_nodes(task.cluster_id);
+    std::unordered_set<uint64_t> available_set(cluster_available_nodes.begin(), 
+                                              cluster_available_nodes.end());
     
+    // First pass: collect available candidates
+    std::vector<uint32_t> available_candidates;
     for (uint32_t candidate : candidates) {
         uint64_t candidate_id = g.id_map[candidate];
-        if (task.degree_manager->get_available_degree(candidate_id) > 0) {
+        if (available_set.count(candidate_id)) {
             available_candidates.push_back(candidate);
-        } else {
-            other_candidates.push_back(candidate);
         }
     }
     
-    // Prefer available degree candidates
+    // Prefer available candidates
     if (!available_candidates.empty()) {
         std::uniform_int_distribution<size_t> dist(0, available_candidates.size() - 1);
         return available_candidates[dist(gen)];
-    } else if (!other_candidates.empty()) {
-        std::uniform_int_distribution<size_t> dist(0, other_candidates.size() - 1);
-        return other_candidates[dist(gen)];
     }
     
-    return UINT32_MAX;
+    // Fallback to any candidate
+    std::uniform_int_distribution<size_t> dist(0, candidates.size() - 1);
+    return candidates[dist(gen)];
 }
 
 } // namespace degree_aware_stages

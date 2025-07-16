@@ -137,19 +137,17 @@ public:
     GraphTaskQueueWithDegrees() = default;
     
     /**
-     * Initialize with empirical and synthetic graphs for degree tracking
+     * Initialize with reference degree sequence directly
      */
     void initialize_degree_manager(
-        std::shared_ptr<Graph> empirical_graph,
-        std::shared_ptr<Graph> synthetic_graph,
-        const std::unordered_map<uint64_t, uint32_t>& emp_node_mapping,
-        const std::unordered_map<uint64_t, uint32_t>& syn_node_mapping) {
+        const Graph& synthetic_graph,
+        std::shared_ptr<const std::vector<uint32_t>> reference_degrees) {
         
         degree_manager = std::make_shared<AvailableNodeDegreesManager>(
-            empirical_graph, synthetic_graph, emp_node_mapping, syn_node_mapping);
+            synthetic_graph, reference_degrees);
             
         auto stats = degree_manager->get_stats();
-        std::cout << "Degree manager initialized with " << stats.total_available_nodes 
+        std::cout << "Simplified degree manager initialized with " << stats.total_available_nodes 
                   << " available nodes, total budget: " << stats.total_available_degrees << std::endl;
     }
     
@@ -178,7 +176,29 @@ public:
         
         tasks_processed = 0;
         total_tasks_created = 0;
+
+        // Pre-compute cluster available nodes for all clusters
+        for (uint32_t cluster_idx = 0; cluster_idx < clustering.cluster_nodes.size(); cluster_idx++) {
+            const auto& nodes = clustering.cluster_nodes[cluster_idx];
+            const auto& missing_nodes = clustering.cluster_missing_nodes[cluster_idx];
+            std::string cluster_id = clustering.cluster_ids[cluster_idx];
+            
+            // Create cluster node IDs set
+            std::unordered_set<uint64_t> cluster_node_ids;
+            for (uint32_t node : nodes) {
+                if (graph.id_map.size() > node) {
+                    cluster_node_ids.insert(graph.id_map[node]);
+                }
+            }
+            for (uint64_t missing_node : missing_nodes) {
+                cluster_node_ids.insert(missing_node);
+            }
+            
+            // Pre-compute available nodes for this cluster
+            degree_manager->precompute_cluster_available_nodes(cluster_id, cluster_node_ids);
+        }
         
+        // Now create tasks for each cluster
         for (uint32_t cluster_idx = 0; cluster_idx < clustering.cluster_nodes.size(); cluster_idx++) {
             const auto& nodes = clustering.cluster_nodes[cluster_idx];
             const auto& missing_nodes = clustering.cluster_missing_nodes[cluster_idx];

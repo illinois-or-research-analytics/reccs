@@ -44,10 +44,6 @@ std::vector<std::vector<uint32_t>> find_connected_components_budget(const Graph&
     return components;
 }
 
-uint32_t get_degree_connectivity_budget(const Graph& g, uint32_t node) {
-    return g.row_ptr[node + 1] - g.row_ptr[node];
-}
-
 /**
  * Degree-aware connectivity enforcement
  * Replicates Python logic for Stage 2: connecting disconnected components while 
@@ -69,26 +65,25 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
         return;
     }
     
-    std::cout << "Found " << components.size() << " components, connecting them..." << std::endl;
-    
+    std::cout << "Found " << components.size() << " components, connecting with " 
+              << min_degree << " edges..." << std::endl;    
+
     // Get available nodes for this cluster
-    auto cluster_available_nodes = degree_aware_stages::get_cluster_available_nodes(task);
+    auto cluster_available_nodes = task.degree_manager->get_cluster_available_nodes(task.cluster_id);
     
     std::cout << "Cluster has " << cluster_available_nodes.size() 
               << " nodes with available degree budget" << std::endl;
+
+    // Create lookup set for available nodes
+    std::unordered_set<uint64_t> available_node_set(cluster_available_nodes.begin(),
+                                                   cluster_available_nodes.end());
     
     // Build hash set of existing edges for O(1) lookup
     auto existing_edges = statics::compute_existing_edges(g);
     auto edge_exists_fast = statics::create_edge_exists_checker(existing_edges);
     
     // Track edges to add
-    std::set<std::pair<uint32_t, uint32_t>> edges_to_add;
-    
-    // Track current degrees
-    std::vector<uint32_t> current_degrees(g.num_nodes);
-    for (uint32_t i = 0; i < g.num_nodes; ++i) {
-        current_degrees[i] = get_degree_connectivity_budget(g, i);
-    }
+    std::vector<std::pair<uint32_t, uint32_t>> edges_to_add;
     
     // Random number generator
     std::random_device rd;
@@ -98,134 +93,160 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
     size_t total_edges_added = 0;
     size_t degree_corrected_edges = 0;
     
-    // Strategy: Connect components through lowest-degree nodes, preferring available budget nodes
+    // Strategy: Draw min_degree_requirement edges between components using random selection
     
-    // Create priority queue of representative nodes from each component
-    // Priority: available budget nodes with lower degrees first
-    struct ComponentRepresentative {
-        uint32_t node;
-        uint32_t component_id;
-        uint32_t degree;
-        bool has_budget;
+    // Pick two largest components as the main partitions to connect
+    std::sort(components.begin(), components.end(), 
+              [](const std::vector<uint32_t>& a, const std::vector<uint32_t>& b) {
+                  return a.size() > b.size();
+              });
+
+    // Connect all components to the largest component first (ensure connectivity)
+    for (size_t i = 1; i < components.size(); ++i) {
+        const auto& component_a = components[0];  // Largest component
+        const auto& component_b = components[i];  // Current component
         
-        // Comparator: prefer available budget nodes, then lower degree
-        bool operator>(const ComponentRepresentative& other) const {
-            if (has_budget != other.has_budget) {
-                return !has_budget; // has_budget nodes have higher priority (lower in max-heap)
-            }
-            return degree > other.degree; // Lower degree has higher priority
-        }
-    };
-    
-    std::priority_queue<ComponentRepresentative, 
-                       std::vector<ComponentRepresentative>, 
-                       std::greater<ComponentRepresentative>> comp_queue;
-    
-    std::vector<uint32_t> component_of_node(g.num_nodes);
-    
-    // Find representative node for each component (prefer available budget, then min degree)
-    for (size_t comp_id = 0; comp_id < components.size(); ++comp_id) {
-        uint32_t best_node = components[comp_id][0];
-        uint32_t best_degree = current_degrees[best_node];
-        bool best_has_budget = false;
-        
-        // Check if best node has budget
-        uint64_t best_node_id = g.id_map[best_node];
-        if (cluster_available_nodes.count(best_node_id) > 0) {
-            best_has_budget = task.degree_manager->get_available_degree(best_node_id) > 0;
-        }
-        
-        for (uint32_t node : components[comp_id]) {
-            component_of_node[node] = comp_id;
+        // Draw min_degree_requirement edges between these two components
+        for (uint32_t edge_count = 0; edge_count < min_degree; ++edge_count) {
+            // Build candidate lists for both sides
+            std::vector<uint32_t> available_nodes_a, all_nodes_a;
+            std::vector<uint32_t> available_nodes_b, all_nodes_b;
             
-            uint64_t node_id = g.id_map[node];
-            bool has_budget = cluster_available_nodes.count(node_id) > 0 && 
-                             task.degree_manager->get_available_degree(node_id) > 0;
-            uint32_t node_degree = current_degrees[node];
-            
-            // Prefer nodes with budget, then lower degree
-            bool is_better = false;
-            if (has_budget && !best_has_budget) {
-                is_better = true;
-            } else if (has_budget == best_has_budget) {
-                is_better = (node_degree < best_degree);
+            // Component A candidates
+            for (uint32_t node : component_a) {
+                all_nodes_a.push_back(node);
+                uint64_t node_id = g.id_map[node];
+                if (available_node_set.count(node_id) && 
+                    task.degree_manager->get_available_degree(node_id) > 0) {
+                    available_nodes_a.push_back(node);
+                }
             }
             
-            if (is_better) {
-                best_node = node;
-                best_degree = node_degree;
-                best_has_budget = has_budget;
+            // Component B candidates  
+            for (uint32_t node : component_b) {
+                all_nodes_b.push_back(node);
+                uint64_t node_id = g.id_map[node];
+                if (available_node_set.count(node_id) && 
+                    task.degree_manager->get_available_degree(node_id) > 0) {
+                    available_nodes_b.push_back(node);
+                }
             }
-        }
-        
-        comp_queue.push({best_node, static_cast<uint32_t>(comp_id), best_degree, best_has_budget});
-    }
-    
-    // Build spine connecting components
-    std::vector<uint32_t> spine_nodes;
-    std::unordered_set<uint32_t> used_components;
-    
-    while (!comp_queue.empty()) {
-        ComponentRepresentative repr = comp_queue.top();
-        comp_queue.pop();
-        
-        // Skip if we already have a node from this component in the spine
-        if (used_components.count(repr.component_id) > 0) continue;
-        
-        spine_nodes.push_back(repr.node);
-        used_components.insert(repr.component_id);
-    }
-    
-    std::cout << "Selected spine nodes: ";
-    for (uint32_t node : spine_nodes) {
-        uint64_t node_id = g.id_map[node];
-        bool has_budget = cluster_available_nodes.count(node_id) > 0 && 
-                         task.degree_manager->get_available_degree(node_id) > 0;
-        std::cout << node << (has_budget ? "*" : "") << " ";
-    }
-    std::cout << std::endl;
-    
-    // Connect spine nodes to form a single connected component
-    for (size_t i = 0; i + 1 < spine_nodes.size(); ++i) {
-        uint32_t u = spine_nodes[i];
-        uint32_t v = spine_nodes[i + 1];
-        
-        if (!edge_exists_fast(u, v)) {
-            if (u > v) std::swap(u, v);
-            edges_to_add.insert({u, v});
-            current_degrees[u]++;
-            current_degrees[v]++;
+            
+            uint32_t selected_a = UINT32_MAX;
+            uint32_t selected_b = UINT32_MAX;
+            
+            // Random selection strategy:
+            // Priority 1: Both nodes have available budget
+            // Priority 2: One node has available budget  
+            // Priority 3: Neither node has available budget (fallback)
+            
+            bool found_edge = false;
+            
+            // Priority 1: Try available from both sides
+            if (!available_nodes_a.empty() && !available_nodes_b.empty()) {
+                std::uniform_int_distribution<size_t> dist_a(0, available_nodes_a.size() - 1);
+                std::uniform_int_distribution<size_t> dist_b(0, available_nodes_b.size() - 1);
+                selected_a = available_nodes_a[dist_a(gen)];
+                selected_b = available_nodes_b[dist_b(gen)];
+                found_edge = true;
+            }
+            // Priority 2: Try available from A, any from B
+            else if (!available_nodes_a.empty() && !all_nodes_b.empty()) {
+                std::uniform_int_distribution<size_t> dist_a(0, available_nodes_a.size() - 1);
+                std::uniform_int_distribution<size_t> dist_b(0, all_nodes_b.size() - 1);
+                selected_a = available_nodes_a[dist_a(gen)];
+                selected_b = all_nodes_b[dist_b(gen)];
+                found_edge = true;
+            }
+            // Priority 2: Try any from A, available from B
+            else if (!all_nodes_a.empty() && !available_nodes_b.empty()) {
+                std::uniform_int_distribution<size_t> dist_a(0, all_nodes_a.size() - 1);
+                std::uniform_int_distribution<size_t> dist_b(0, available_nodes_b.size() - 1);
+                selected_a = all_nodes_a[dist_a(gen)];
+                selected_b = available_nodes_b[dist_b(gen)];
+                found_edge = true;
+            }
+            // Priority 3: Fallback to any from both sides
+            else if (!all_nodes_a.empty() && !all_nodes_b.empty()) {
+                std::uniform_int_distribution<size_t> dist_a(0, all_nodes_a.size() - 1);
+                std::uniform_int_distribution<size_t> dist_b(0, all_nodes_b.size() - 1);
+                selected_a = all_nodes_a[dist_a(gen)];
+                selected_b = all_nodes_b[dist_b(gen)];
+                found_edge = true;
+            }
+            
+            if (!found_edge) {
+                std::cerr << "Warning: Could not find nodes to connect components" << std::endl;
+                break;
+            }
+            
+            // Check if edge already exists or is already planned
+            uint32_t u = std::min(selected_a, selected_b);
+            uint32_t v = std::max(selected_a, selected_b);
+            
+            if (edge_exists_fast(u, v)) {
+                continue; // Skip existing edge
+            }
+            
+            // Check if already in our planned edges
+            bool already_planned = false;
+            for (const auto& edge : edges_to_add) {
+                if (edge.first == u && edge.second == v) {
+                    already_planned = true;
+                    break;
+                }
+            }
+            
+            if (already_planned) {
+                continue; // Skip already planned edge
+            }
+            
+            // Add the edge
+            edges_to_add.emplace_back(u, v);
             total_edges_added++;
             
-            // Check if this edge uses available degree budget
+            // Track if this edge uses available degree budget
             uint64_t u_id = g.id_map[u];
             uint64_t v_id = g.id_map[v];
-            bool u_has_budget = cluster_available_nodes.count(u_id) > 0 && 
-                               task.degree_manager->get_available_degree(u_id) > 0;
-            bool v_has_budget = cluster_available_nodes.count(v_id) > 0 && 
-                               task.degree_manager->get_available_degree(v_id) > 0;
-            
-            if (u_has_budget || v_has_budget) {
+            if (available_node_set.count(u_id) || available_node_set.count(v_id)) {
                 degree_corrected_edges++;
             }
+            
+            std::cout << "Connecting component " << 0 << " (node " << selected_a 
+                      << ") to component " << i << " (node " << selected_b 
+                      << ") - edge " << (edge_count + 1) << "/" << min_degree << std::endl;
         }
     }
     
-    // Actually add the edges to the graph using batch addition
-    std::vector<std::pair<uint32_t, uint32_t>> edges_vector(edges_to_add.begin(), edges_to_add.end());
-    add_edges_batch(g, edges_vector);
-    
-    // Consume degree budgets for edges that were added
-    for (const auto& edge : edges_vector) {
-        uint64_t u_id = g.id_map[edge.first];
-        uint64_t v_id = g.id_map[edge.second];
+    // Batch add all edges at once
+    if (!edges_to_add.empty()) {
+        add_edges_batch(g, edges_to_add);
         
-        // Try to consume budget (thread-safe)
-        task.degree_manager->try_consume_degree(u_id, 1);
-        task.degree_manager->try_consume_degree(v_id, 1);
+        // Batch consume degree budgets efficiently
+        std::vector<std::pair<uint64_t, int32_t>> consumptions;
+        consumptions.reserve(edges_to_add.size() * 2);
+        
+        for (const auto& edge : edges_to_add) {
+            uint64_t u_id = g.id_map[edge.first];
+            uint64_t v_id = g.id_map[edge.second];
+            
+            if (available_node_set.count(u_id)) {
+                consumptions.emplace_back(u_id, 1);
+            }
+            if (available_node_set.count(v_id)) {
+                consumptions.emplace_back(v_id, 1);
+            }
+        }
+        
+        // Try batch consumption
+        task.degree_manager->try_consume_degrees_batch(consumptions);
+        
+        // Update cluster cache
+        task.degree_manager->update_cluster_cache(task.cluster_id, task.cluster_node_ids);
     }
     
-    std::cout << "Added " << edges_to_add.size() << " edges for connectivity. "
+    std::cout << "Added " << edges_to_add.size() << " edges for connectivity (" 
+              << min_degree << " per component pair). "
               << "Degree corrected: " << degree_corrected_edges 
               << " (" << (total_edges_added > 0 ? (degree_corrected_edges * 100 / total_edges_added) : 0) 
               << "%)" << std::endl;

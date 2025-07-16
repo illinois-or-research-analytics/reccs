@@ -369,41 +369,6 @@ int main(int argc, char** argv) {
         std::cout << "Successfully loaded clustering with " << clustering.size() << " clusters." << std::endl;
     }
 
-    // Load empirical graph for degree budget tracking (if in standard mode)
-    std::shared_ptr<Graph> empirical_graph = nullptr;
-    std::unordered_map<uint64_t, uint32_t> emp_node_mapping;
-    std::unordered_map<uint64_t, uint32_t> syn_node_mapping;
-    
-    if (!fast_mode && !empirical_graph_filename.empty()) {
-        if (verbose) {
-            std::cout << "Loading empirical graph for degree budget tracking: " << empirical_graph_filename << std::endl;
-        }
-        
-        if (!fs::exists(empirical_graph_filename)) {
-            std::cerr << "Error: Empirical graph file not found: " << empirical_graph_filename << std::endl;
-            return 1;
-        }
-        
-        auto emp_graph = load_undirected_tsv_edgelist_parallel(empirical_graph_filename, num_threads, verbose);
-        empirical_graph = std::make_shared<Graph>(std::move(emp_graph));
-        
-        // Create node mappings
-        emp_node_mapping = create_node_mapping(*empirical_graph);
-        syn_node_mapping = create_node_mapping(clustered_sbm_graph);
-        
-        if (verbose) {
-            std::cout << "Empirical graph loaded. Nodes: " << empirical_graph->num_nodes 
-                      << ", Edges: " << empirical_graph->num_edges << std::endl;
-            std::cout << "Created node mappings: " << emp_node_mapping.size() 
-                      << " empirical, " << syn_node_mapping.size() << " synthetic" << std::endl;
-        }
-    } else if (!fast_mode) {
-        if (verbose) {
-            std::cout << "Warning: No empirical graph specified. Falling back to fast mode." << std::endl;
-        }
-        fast_mode = true;
-    }
-
     // Load requirements and degree sequence
     if (verbose) {
         std::cout << "Loading cluster requirements from: " << requirements_filename << std::endl;
@@ -495,12 +460,7 @@ int main(int argc, char** argv) {
         GraphTaskQueueWithDegrees task_queue;
 
         // Initialize degree manager
-        task_queue.initialize_degree_manager(
-            empirical_graph,
-            std::make_shared<Graph>(clustered_sbm_graph), // Create shared_ptr
-            emp_node_mapping,
-            syn_node_mapping
-        );
+        task_queue.initialize_degree_manager(clustered_sbm_graph, reference_degree_sequence);
 
         // Set degree-aware task functions
         task_queue.set_task_functions(
