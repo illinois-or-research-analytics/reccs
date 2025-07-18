@@ -176,27 +176,6 @@ public:
         
         tasks_processed = 0;
         total_tasks_created = 0;
-
-        // Pre-compute cluster available nodes for all clusters
-        for (uint32_t cluster_idx = 0; cluster_idx < clustering.cluster_nodes.size(); cluster_idx++) {
-            const auto& nodes = clustering.cluster_nodes[cluster_idx];
-            const auto& missing_nodes = clustering.cluster_missing_nodes[cluster_idx];
-            std::string cluster_id = clustering.cluster_ids[cluster_idx];
-            
-            // Create cluster node IDs set
-            std::unordered_set<uint64_t> cluster_node_ids;
-            for (uint32_t node : nodes) {
-                if (graph.id_map.size() > node) {
-                    cluster_node_ids.insert(graph.id_map[node]);
-                }
-            }
-            for (uint64_t missing_node : missing_nodes) {
-                cluster_node_ids.insert(missing_node);
-            }
-            
-            // Pre-compute available nodes for this cluster
-            degree_manager->precompute_cluster_available_nodes(cluster_id, cluster_node_ids);
-        }
         
         // Now create tasks for each cluster
         for (uint32_t cluster_idx = 0; cluster_idx < clustering.cluster_nodes.size(); cluster_idx++) {
@@ -316,16 +295,11 @@ public:
         
         std::cout << "Starting work-stealing processing with " << num_threads << " threads" << std::endl;
         
-        // Print initial degree manager stats
-        auto initial_stats = degree_manager->get_stats();
-        std::cout << "Initial available degrees - Nodes: " << initial_stats.total_available_nodes 
-                  << ", Total budget: " << initial_stats.total_available_degrees 
-                  << ", Avg: " << initial_stats.avg_available_degree << std::endl;
-        
         #pragma omp parallel num_threads(num_threads)
         {
             #pragma omp single
             {
+                // Create tasks dynamically
                 while (!is_empty()) {
                     #pragma omp task
                     {
@@ -334,12 +308,6 @@ public:
                 }
             }
         }
-        
-        // Print final degree manager stats
-        auto final_stats = degree_manager->get_stats();
-        std::cout << "Final available degrees - Nodes: " << final_stats.total_available_nodes 
-                  << ", Total budget: " << final_stats.total_available_degrees 
-                  << ", Avg: " << final_stats.avg_available_degree << std::endl;
         
         std::cout << "Processed " << tasks_processed.load() << " tasks total" << std::endl;
     }

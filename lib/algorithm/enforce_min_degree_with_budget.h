@@ -12,14 +12,22 @@
 #include "../data_structures/available_node_degrees.h"
 
 /**
- * Degree-aware minimum degree enforcement
- * Replicates Python logic: prioritize available degree nodes when adding edges
+ * Performance-optimized degree-aware minimum degree enforcement
+ * Each task operates on its own local degree budgets - NO SHARED STATE!
+ */
+/**
+ * Ultra-high-performance minimum degree enforcement for million-node graphs
+ * Trades some thread-safety for massive performance gains
+ */
+/**
+ * Ultra-high-performance minimum degree enforcement for million-node graphs
+ * Trades some thread-safety for massive performance gains
  */
 void enforce_min_degree_with_budget(GraphTaskWithDegrees& task) {
     Graph& g = *task.subgraph;
     uint32_t min_degree = task.min_degree_requirement;
     
-    std::cout << "Starting simplified minimum degree enforcement on cluster " 
+    std::cout << "Starting high-performance minimum degree enforcement on cluster " 
               << g.id << ". Minimum degree: " << min_degree << std::endl;
 
     if (min_degree >= g.num_nodes || (g.num_nodes > 1 && min_degree > g.num_nodes - 1)) {
@@ -28,194 +36,171 @@ void enforce_min_degree_with_budget(GraphTaskWithDegrees& task) {
     }
     
     // Check if all degrees are already satisfied
-    bool all_satisfied = true;
-    for (uint32_t i = 0; i < g.num_nodes; ++i) {
-        uint32_t degree = g.row_ptr[i + 1] - g.row_ptr[i];
-        if (degree < min_degree) {
-            all_satisfied = false;
-            break;
-        }
-    }
-    if (all_satisfied) return;
-    
-    // Get cached available nodes for this cluster
-    auto cluster_available_nodes = task.degree_manager->get_cluster_available_nodes(task.cluster_id);
-    
-    std::cout << "Cluster has " << cluster_available_nodes.size() 
-              << " cached available degree nodes" << std::endl;
-    
-    // Pre-compute existing edges once
-    auto existing_edges = statics::compute_existing_edges(g);
-    auto edge_exists_fast = statics::create_edge_exists_checker(existing_edges);
-    
-    // Track current degrees
     std::vector<uint32_t> current_degrees(g.num_nodes);
+    std::vector<uint32_t> nodes_needing_edges;
+    nodes_needing_edges.reserve(g.num_nodes);
+    
     for (uint32_t i = 0; i < g.num_nodes; ++i) {
         current_degrees[i] = g.row_ptr[i + 1] - g.row_ptr[i];
-    }
-
-    // Create priority queue for nodes needing edges
-    std::priority_queue<NodeDegree, std::vector<NodeDegree>, std::greater<NodeDegree>> degree_heap;
-    for (uint32_t i = 0; i < g.num_nodes; ++i) {
         if (current_degrees[i] < min_degree) {
-            degree_heap.push({i, current_degrees[i]});
+            nodes_needing_edges.push_back(i);
         }
     }
     
-    // Pre-allocate for performance
+    if (nodes_needing_edges.empty()) {
+        std::cout << "All nodes already satisfy minimum degree requirement" << std::endl;
+        return;
+    }
+    
+    // OPTIMIZATION: Build fast lookup structures ONCE
+    auto existing_edges = statics::compute_existing_edges(g);
+    auto edge_exists = statics::create_edge_exists_checker(existing_edges);
+    
+    // OPTIMIZATION: Use the existing available nodes list from task
+    task.initialize_local_degrees();
+    const auto& available_node_ids = task.get_local_available_nodes(); // uint64_t global IDs
+    
+    // Convert to local subgraph indices and create fast lookup
+    std::vector<bool> has_budget(g.num_nodes, false);
+    std::vector<uint32_t> available_nodes;
+    available_nodes.reserve(available_node_ids.size());
+    
+    for (uint64_t global_node_id : available_node_ids) {
+        auto it = g.node_map.find(global_node_id);
+        if (it != g.node_map.end()) {
+            uint32_t local_idx = it->second;
+            has_budget[local_idx] = true;
+            available_nodes.push_back(local_idx);
+        }
+    }
+    
+    std::cout << "Nodes needing edges: " << nodes_needing_edges.size() 
+              << ", Nodes with budget: " << available_nodes.size() << std::endl;
+    
+    // Track planned edges efficiently
+    std::unordered_set<uint64_t> planned_edges;
     std::vector<std::pair<uint32_t, uint32_t>> edges_to_add;
-    edges_to_add.reserve(g.num_nodes * min_degree / 2);
-
-    // Create lookup set for available nodes - one time cost
-    std::unordered_set<uint64_t> available_node_set(cluster_available_nodes.begin(),
-                                                   cluster_available_nodes.end());
-
-    // Random number generator for tie-breaking
+    edges_to_add.reserve(nodes_needing_edges.size() * min_degree);
+    
     std::random_device rd;
     std::mt19937 gen(rd());
     
-    // Counters for statistics
     size_t total_edges_added = 0;
     size_t degree_corrected_edges = 0;
-    size_t iterations = 0;
-    const size_t MAX_ITERATIONS = g.num_nodes * 3;
-
-    // Reusable neighbor tracking
-    std::vector<bool> is_neighbor(g.num_nodes, false);
-    std::vector<uint32_t> neighbor_cleanup;
-    neighbor_cleanup.reserve(g.num_nodes);
     
-    while (!degree_heap.empty() && iterations < MAX_ITERATIONS) {
-        iterations++;
+    // OPTIMIZATION: Process nodes in batches to reduce overhead
+    const size_t BATCH_SIZE = 1000;
+    
+    for (size_t batch_start = 0; batch_start < nodes_needing_edges.size(); batch_start += BATCH_SIZE) {
+        size_t batch_end = std::min(batch_start + BATCH_SIZE, nodes_needing_edges.size());
         
-        NodeDegree nd = degree_heap.top();
-        degree_heap.pop();
-        uint32_t u = nd.node;
-        
-        // If degree already satisfied, skip
-        if (current_degrees[u] >= min_degree) continue;
-
-        // Mark current neighbors efficiently
-        neighbor_cleanup.clear();
-        for (uint32_t j = g.row_ptr[u]; j < g.row_ptr[u + 1]; ++j) {
-            uint32_t neighbor = g.col_idx[j];
-            if (!is_neighbor[neighbor]) {
-                is_neighbor[neighbor] = true;
-                neighbor_cleanup.push_back(neighbor);
-            }
-        }
-        
-        // Mark self to prevent self-loops
-        if (!is_neighbor[u]) {
-            is_neighbor[u] = true;
-            neighbor_cleanup.push_back(u);
-        }
-        
-        // Add planned edges to neighbor set
-        for (const auto& edge : edges_to_add) {
-            if (edge.first == u && !is_neighbor[edge.second]) {
-                is_neighbor[edge.second] = true;
-                neighbor_cleanup.push_back(edge.second);
-            }
-            if (edge.second == u && !is_neighbor[edge.first]) {
-                is_neighbor[edge.first] = true;
-                neighbor_cleanup.push_back(edge.first);
-            }
-        }
-        
-        while (current_degrees[u] < min_degree) {
-            // Build two lists: available non-neighbors and all non-neighbors
-            std::vector<uint32_t> available_non_neighbors;
-            std::vector<uint32_t> all_non_neighbors;
+        // Process batch of nodes
+        for (size_t idx = batch_start; idx < batch_end; ++idx) {
+            uint32_t u = nodes_needing_edges[idx];
             
-            for (uint32_t v = 0; v < g.num_nodes; ++v) {
-                if (is_neighbor[v]) continue; // Skip neighbors
+            // Skip if node already satisfied
+            if (current_degrees[u] >= min_degree) continue;
+            
+            // OPTIMIZATION: Pre-build neighbor set for this node
+            std::vector<bool> is_neighbor(g.num_nodes, false);
+            is_neighbor[u] = true; // Prevent self-loops
+            
+            // Mark existing neighbors
+            for (uint32_t j = g.row_ptr[u]; j < g.row_ptr[u + 1]; ++j) {
+                is_neighbor[g.col_idx[j]] = true;
+            }
+            
+            // Mark planned neighbors
+            for (const auto& edge : edges_to_add) {
+                if (edge.first == u) is_neighbor[edge.second] = true;
+                if (edge.second == u) is_neighbor[edge.first] = true;
+            }
+            
+            // Add edges until degree requirement met
+            while (current_degrees[u] < min_degree) {
+                uint32_t selected_v = UINT32_MAX;
                 
-                all_non_neighbors.push_back(v);
-                
-                // Check if this node has available degree budget
-                uint64_t v_id = g.id_map[v];
-                if (available_node_set.count(v_id) && 
-                    task.degree_manager->get_available_degree(v_id) > 0) {
-                    available_non_neighbors.push_back(v);
+                // STRATEGY 1: Try available nodes first (with budget)
+                if (!available_nodes.empty()) {
+                    std::vector<uint32_t> valid_available;
+                    valid_available.reserve(available_nodes.size());
+                    
+                    for (uint32_t v : available_nodes) {
+                        if (!is_neighbor[v] && has_budget[v]) {
+                            valid_available.push_back(v);
+                        }
+                    }
+                    
+                    if (!valid_available.empty()) {
+                        std::uniform_int_distribution<size_t> dist(0, valid_available.size() - 1);
+                        selected_v = valid_available[dist(gen)];
+                    }
                 }
-            }
-            
-            uint32_t selected_v = UINT32_MAX;
-            
-            // Priority 1: Choose from available non-neighbors (nodes with budget)
-            if (!available_non_neighbors.empty()) {
-                std::uniform_int_distribution<size_t> dist(0, available_non_neighbors.size() - 1);
-                selected_v = available_non_neighbors[dist(gen)];
-            }
-            // Priority 2: If no available non-neighbors, choose from ALL non-neighbors
-            else if (!all_non_neighbors.empty()) {
-                std::uniform_int_distribution<size_t> dist(0, all_non_neighbors.size() - 1);
-                selected_v = all_non_neighbors[dist(gen)];
-            }
-            
-            if (selected_v == UINT32_MAX) {
-                std::cerr << "Warning: Node " << u << " cannot reach degree " << min_degree
-                          << " (no more non-neighbors available)" << std::endl;
-                break; // No more candidates
-            }
-            
-            // Add the edge
-            edges_to_add.emplace_back(std::min(u, selected_v), std::max(u, selected_v));
-            current_degrees[u]++;
-            current_degrees[selected_v]++;
-            total_edges_added++;
-            
-            // Track if this edge uses available degree budget
-            uint64_t u_id = g.id_map[u];
-            uint64_t v_id = g.id_map[selected_v];
-            if (available_node_set.count(u_id) || available_node_set.count(v_id)) {
-                degree_corrected_edges++;
-            }
-            
-            // Update neighbor tracking
-            if (!is_neighbor[selected_v]) {
+                
+                // STRATEGY 2: If no available nodes, try any non-neighbor
+                if (selected_v == UINT32_MAX) {
+                    std::vector<uint32_t> all_candidates;
+                    all_candidates.reserve(g.num_nodes);
+                    
+                    for (uint32_t v = 0; v < g.num_nodes; ++v) {
+                        if (!is_neighbor[v]) {
+                            all_candidates.push_back(v);
+                        }
+                    }
+                    
+                    if (!all_candidates.empty()) {
+                        std::uniform_int_distribution<size_t> dist(0, all_candidates.size() - 1);
+                        selected_v = all_candidates[dist(gen)];
+                    }
+                }
+                
+                if (selected_v == UINT32_MAX) {
+                    std::cerr << "Warning: Node " << u << " cannot reach degree " << min_degree << std::endl;
+                    break;
+                }
+                
+                // Add edge
+                uint32_t edge_u = std::min(u, selected_v);
+                uint32_t edge_v = std::max(u, selected_v);
+                
+                edges_to_add.emplace_back(edge_u, edge_v);
+                planned_edges.insert(statics::encode_edge(edge_u, edge_v));
+                
+                current_degrees[u]++;
+                current_degrees[selected_v]++;
+                total_edges_added++;
+                
+                // Track budget usage
+                if (has_budget[u] || has_budget[selected_v]) {
+                    degree_corrected_edges++;
+                }
+                
+                // Update budget status - consume_local_degree handles list maintenance
+                if (has_budget[u]) {
+                    uint64_t u_id = g.id_map[u];
+                    task.consume_local_degree(u_id, 1);
+                    if (task.get_local_available_degree(u_id) == 0) {
+                        has_budget[u] = false;
+                    }
+                }
+                
+                if (has_budget[selected_v]) {
+                    uint64_t v_id = g.id_map[selected_v];
+                    task.consume_local_degree(v_id, 1);
+                    if (task.get_local_available_degree(v_id) == 0) {
+                        has_budget[selected_v] = false;
+                    }
+                }
+                
+                // Update neighbor tracking
                 is_neighbor[selected_v] = true;
-                neighbor_cleanup.push_back(selected_v);
             }
-        }
-        
-        // Clean up neighbor tracking
-        for (uint32_t neighbor : neighbor_cleanup) {
-            is_neighbor[neighbor] = false;
-        }
-        
-        // Re-add u if still needs edges
-        if (current_degrees[u] < min_degree) {
-            degree_heap.push({u, current_degrees[u]});
         }
     }
     
-    // Batch add all edges at once
+    // Batch add all edges
     if (!edges_to_add.empty()) {
         add_edges_batch(g, edges_to_add);
-        
-        // Batch consume degree budgets efficiently
-        std::vector<std::pair<uint64_t, int32_t>> consumptions;
-        consumptions.reserve(edges_to_add.size() * 2);
-        
-        for (const auto& edge : edges_to_add) {
-            uint64_t u_id = g.id_map[edge.first];
-            uint64_t v_id = g.id_map[edge.second];
-            
-            if (available_node_set.count(u_id)) {
-                consumptions.emplace_back(u_id, 1);
-            }
-            if (available_node_set.count(v_id)) {
-                consumptions.emplace_back(v_id, 1);
-            }
-        }
-        
-        // Try batch consumption - much faster than individual attempts
-        task.degree_manager->try_consume_degrees_batch(consumptions);
-        
-        // Update cluster cache once at the end
-        task.degree_manager->update_cluster_cache(task.cluster_id, task.cluster_node_ids);
     }
     
     std::cout << "Added " << edges_to_add.size() << " edges for minimum degree " 

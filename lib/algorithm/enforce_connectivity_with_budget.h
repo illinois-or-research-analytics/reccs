@@ -45,15 +45,14 @@ std::vector<std::vector<uint32_t>> find_connected_components_budget(const Graph&
 }
 
 /**
- * Degree-aware connectivity enforcement
- * Replicates Python logic for Stage 2: connecting disconnected components while 
- * prioritizing nodes with available degree budget
+ * Degree-aware connectivity enforcement using local degree management
+ * Each task operates on its own local degree budgets - NO SHARED STATE!
  */
 void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
     Graph& g = *task.subgraph;
     uint32_t min_degree = task.min_degree_requirement;
     
-    std::cout << "Starting connectivity enforcement with budget on cluster " 
+    std::cout << "Starting local connectivity enforcement on cluster " 
               << g.id << ". Minimum degree: " << min_degree << std::endl;
 
     // Find all connected components
@@ -68,15 +67,18 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
     std::cout << "Found " << components.size() << " components, connecting with " 
               << min_degree << " edges..." << std::endl;    
 
-    // Get available nodes for this cluster
-    auto cluster_available_nodes = task.degree_manager->get_cluster_available_nodes(task.cluster_id);
+    // Initialize local degrees for this task (lazy initialization)
+    task.initialize_local_degrees();
     
-    std::cout << "Cluster has " << cluster_available_nodes.size() 
-              << " nodes with available degree budget" << std::endl;
+    // Get local available nodes (no shared state!)
+    const auto& local_available_nodes = task.get_local_available_nodes();
+    
+    std::cout << "Cluster has " << local_available_nodes.size() 
+              << " nodes with local available degree budget" << std::endl;
 
-    // Create lookup set for available nodes
-    std::unordered_set<uint64_t> available_node_set(cluster_available_nodes.begin(),
-                                                   cluster_available_nodes.end());
+    // Create lookup set for available nodes from LOCAL data
+    std::unordered_set<uint64_t> available_node_set(local_available_nodes.begin(),
+                                                   local_available_nodes.end());
     
     // Build hash set of existing edges for O(1) lookup
     auto existing_edges = statics::compute_existing_edges(g);
@@ -116,8 +118,7 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
             for (uint32_t node : component_a) {
                 all_nodes_a.push_back(node);
                 uint64_t node_id = g.id_map[node];
-                if (available_node_set.count(node_id) && 
-                    task.degree_manager->get_available_degree(node_id) > 0) {
+                if (task.get_local_available_degree(node_id) > 0) {
                     available_nodes_a.push_back(node);
                 }
             }
@@ -126,8 +127,7 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
             for (uint32_t node : component_b) {
                 all_nodes_b.push_back(node);
                 uint64_t node_id = g.id_map[node];
-                if (available_node_set.count(node_id) && 
-                    task.degree_manager->get_available_degree(node_id) > 0) {
+                if (task.get_local_available_degree(node_id) > 0) {
                     available_nodes_b.push_back(node);
                 }
             }
@@ -205,12 +205,16 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
             edges_to_add.emplace_back(u, v);
             total_edges_added++;
             
-            // Track if this edge uses available degree budget
+            // Track if this edge uses available degree budget using LOCAL data
             uint64_t u_id = g.id_map[u];
             uint64_t v_id = g.id_map[v];
-            if (available_node_set.count(u_id) || available_node_set.count(v_id)) {
+            if (task.get_local_available_degree(u_id) > 0 || task.get_local_available_degree(v_id) > 0) {
                 degree_corrected_edges++;
             }
+            
+            // Consume local budgets (no contention!)
+            task.consume_local_degree(u_id, 1);
+            task.consume_local_degree(v_id, 1);
             
             std::cout << "Connecting component " << 0 << " (node " << selected_a 
                       << ") to component " << i << " (node " << selected_b 
@@ -221,35 +225,16 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
     // Batch add all edges at once
     if (!edges_to_add.empty()) {
         add_edges_batch(g, edges_to_add);
-        
-        // Batch consume degree budgets efficiently
-        std::vector<std::pair<uint64_t, int32_t>> consumptions;
-        consumptions.reserve(edges_to_add.size() * 2);
-        
-        for (const auto& edge : edges_to_add) {
-            uint64_t u_id = g.id_map[edge.first];
-            uint64_t v_id = g.id_map[edge.second];
-            
-            if (available_node_set.count(u_id)) {
-                consumptions.emplace_back(u_id, 1);
-            }
-            if (available_node_set.count(v_id)) {
-                consumptions.emplace_back(v_id, 1);
-            }
-        }
-        
-        // Try batch consumption
-        task.degree_manager->try_consume_degrees_batch(consumptions);
-        
-        // Update cluster cache
-        task.degree_manager->update_cluster_cache(task.cluster_id, task.cluster_node_ids);
     }
+    
+    // Report final local available nodes
+    const auto& final_available = task.get_local_available_nodes();
     
     std::cout << "Added " << edges_to_add.size() << " edges for connectivity (" 
               << min_degree << " per component pair). "
               << "Degree corrected: " << degree_corrected_edges 
               << " (" << (total_edges_added > 0 ? (degree_corrected_edges * 100 / total_edges_added) : 0) 
-              << "%)" << std::endl;
+              << "%). Remaining local budget nodes: " << final_available.size() << std::endl;
 }
 
 #endif // ENFORCE_CONNECTIVITY_WITH_BUDGET_H

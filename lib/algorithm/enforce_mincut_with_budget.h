@@ -14,26 +14,28 @@
 #include "../data_structures/available_node_degrees.h"
 
 /**
- * Degree-aware mincut enforcement
- * Replicates Python logic for Stage 3: ensuring minimum cut while 
- * prioritizing nodes with available degree budget
+ * Degree-aware mincut enforcement using local degree management
+ * Each task operates on its own local degree budgets - NO SHARED STATE!
  */
 void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
     Graph& g = *task.subgraph;
     uint32_t min_cut_size = task.min_degree_requirement;
     
-    std::cout << "Starting mincut enforcement with budget on cluster "
+    std::cout << "Starting local mincut enforcement on cluster "
               << g.id << ". Target minimum cut size: " << min_cut_size << std::endl;
 
-    // Get available nodes for this cluster
-    auto cluster_available_nodes = task.degree_manager->get_cluster_available_nodes(task.cluster_id);
+    // Initialize local degrees for this task (lazy initialization)
+    task.initialize_local_degrees();
     
-    std::cout << "Cluster has " << cluster_available_nodes.size() 
-              << " nodes with available degree budget" << std::endl;
+    // Get local available nodes (no shared state!)
+    const auto& local_available_nodes = task.get_local_available_nodes();
+    
+    std::cout << "Cluster has " << local_available_nodes.size() 
+              << " nodes with local available degree budget" << std::endl;
 
-    // Create lookup set for available nodes
-    std::unordered_set<uint64_t> available_node_set(cluster_available_nodes.begin(),
-                                                   cluster_available_nodes.end());
+    // Create lookup set for available nodes from LOCAL data
+    std::unordered_set<uint64_t> available_node_set(local_available_nodes.begin(),
+                                                   local_available_nodes.end());
 
     int iteration = 0;
     std::random_device rd;
@@ -89,7 +91,7 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
         auto existing_edges = statics::compute_existing_edges(g);
         auto edge_exists = statics::create_edge_exists_checker(existing_edges);
         
-        // Categorize nodes by available budget (Python-style)
+        // Categorize nodes by available budget using LOCAL data
         std::vector<uint32_t> light_available, light_all;
         std::vector<uint32_t> heavy_available, heavy_all;
         
@@ -98,8 +100,7 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
             light_all.push_back(node);
             
             uint64_t node_id = g.id_map[node];
-            if (available_node_set.count(node_id) && 
-                task.degree_manager->get_available_degree(node_id) > 0) {
+            if (task.get_local_available_degree(node_id) > 0) {
                 light_available.push_back(node);
             }
         }
@@ -109,8 +110,7 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
             heavy_all.push_back(node);
             
             uint64_t node_id = g.id_map[node];
-            if (available_node_set.count(node_id) && 
-                task.degree_manager->get_available_degree(node_id) > 0) {
+            if (task.get_local_available_degree(node_id) > 0) {
                 heavy_available.push_back(node);
             }
         }
@@ -120,13 +120,13 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
         std::cout << "Heavy partition: " << heavy_available.size() 
                   << " with budget, " << heavy_all.size() - heavy_available.size() << " without" << std::endl;
         
-        // Add edges using Python-style random selection
+        // Add edges using random selection with budget prioritization
         for (uint32_t edge_count = 0; edge_count < edges_needed; ++edge_count) {
             uint32_t selected_light = UINT32_MAX;
             uint32_t selected_heavy = UINT32_MAX;
             bool found_edge = false;
             
-            // Python-style selection priority:
+            // Selection priority:
             // Priority 1: Both sides have available budget
             if (!light_available.empty() && !heavy_available.empty()) {
                 std::uniform_int_distribution<size_t> dist_light(0, light_available.size() - 1);
@@ -195,12 +195,16 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
             edges_to_add.emplace_back(u, v);
             total_edges_added++;
             
-            // Track if this edge uses available degree budget
+            // Track if this edge uses available degree budget using LOCAL data
             uint64_t u_id = g.id_map[u];
             uint64_t v_id = g.id_map[v];
-            if (available_node_set.count(u_id) || available_node_set.count(v_id)) {
+            if (task.get_local_available_degree(u_id) > 0 || task.get_local_available_degree(v_id) > 0) {
                 degree_corrected_edges++;
             }
+            
+            // Consume local budgets immediately (no contention!)
+            task.consume_local_degree(u_id, 1);
+            task.consume_local_degree(v_id, 1);
             
             std::cout << "Cross-partition edge " << (edge_count + 1) << "/" << edges_needed 
                       << ": " << selected_light << " <-> " << selected_heavy << std::endl;
@@ -218,28 +222,6 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
         // Batch add the edges to the graph
         add_edges_batch(g, edges_to_add);
         
-        // Batch consume degree budgets efficiently
-        std::vector<std::pair<uint64_t, int32_t>> consumptions;
-        consumptions.reserve(edges_to_add.size() * 2);
-        
-        for (const auto& edge : edges_to_add) {
-            uint64_t u_id = g.id_map[edge.first];
-            uint64_t v_id = g.id_map[edge.second];
-            
-            if (available_node_set.count(u_id)) {
-                consumptions.emplace_back(u_id, 1);
-            }
-            if (available_node_set.count(v_id)) {
-                consumptions.emplace_back(v_id, 1);
-            }
-        }
-        
-        // Try batch consumption
-        task.degree_manager->try_consume_degrees_batch(consumptions);
-        
-        // Update cluster cache
-        task.degree_manager->update_cluster_cache(task.cluster_id, task.cluster_node_ids);
-        
         std::cout << "Added " << edges_to_add.size() << " edges in iteration " << iteration << std::endl;
         
         // Safety check to prevent infinite loops
@@ -251,10 +233,13 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
         }
     }
     
+    // Report final local available nodes
+    const auto& final_available = task.get_local_available_nodes();
+    
     std::cout << "Mincut enforcement completed. Total edges added: " << total_edges_added 
               << ", Degree corrected: " << degree_corrected_edges 
               << " (" << (total_edges_added > 0 ? (degree_corrected_edges * 100 / total_edges_added) : 0) 
-              << "%)" << std::endl;
+              << "%). Remaining local budget nodes: " << final_available.size() << std::endl;
 }
 
 #endif // ENFORCE_MINCUT_WITH_BUDGET_H
