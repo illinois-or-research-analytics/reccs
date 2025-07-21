@@ -51,6 +51,9 @@ std::vector<std::vector<uint32_t>> find_connected_components_budget(const Graph&
 void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
     Graph& g = *task.subgraph;
     uint32_t min_degree = task.min_degree_requirement;
+
+    auto start_time = std::chrono::steady_clock::now();
+    const auto MAX_TIME = std::chrono::seconds(30); // 30 second timeout
     
     std::cout << "Starting local connectivity enforcement on cluster " 
               << g.id << ". Minimum degree: " << min_degree << std::endl;
@@ -110,6 +113,10 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
         
         // Draw min_degree_requirement edges between these two components
         for (uint32_t edge_count = 0; edge_count < min_degree; ++edge_count) {
+            if (std::chrono::steady_clock::now() - start_time > MAX_TIME) {
+                std::cout << "Timeout reached, stopping connectivity enforcement" << std::endl;
+                break;
+            }
             // Build candidate lists for both sides
             std::vector<uint32_t> available_nodes_a, all_nodes_a;
             std::vector<uint32_t> available_nodes_b, all_nodes_b;

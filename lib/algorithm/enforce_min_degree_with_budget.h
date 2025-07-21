@@ -26,6 +26,9 @@
 void enforce_min_degree_with_budget(GraphTaskWithDegrees& task) {
     Graph& g = *task.subgraph;
     uint32_t min_degree = task.min_degree_requirement;
+
+    auto start_time = std::chrono::steady_clock::now();
+    const auto MAX_TIME = std::chrono::seconds(30); // 30 second timeout
     
     std::cout << "Starting high-performance minimum degree enforcement on cluster " 
               << g.id << ". Minimum degree: " << min_degree << std::endl;
@@ -118,6 +121,11 @@ void enforce_min_degree_with_budget(GraphTaskWithDegrees& task) {
             
             // Add edges until degree requirement met
             while (current_degrees[u] < min_degree) {
+                if (std::chrono::steady_clock::now() - start_time > MAX_TIME) {
+                    std::cout << "Timeout reached, stopping min degree enforcement" << std::endl;
+                    break;
+                }
+
                 uint32_t selected_v = UINT32_MAX;
                 
                 // STRATEGY 1: Try available nodes first (with budget)

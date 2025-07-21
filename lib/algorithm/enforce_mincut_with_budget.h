@@ -20,6 +20,9 @@
 void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
     Graph& g = *task.subgraph;
     uint32_t min_cut_size = task.min_degree_requirement;
+
+    auto start_time = std::chrono::steady_clock::now();
+    const auto MAX_TIME = std::chrono::seconds(30); // 30 second timeout
     
     std::cout << "Starting local mincut enforcement on cluster "
               << g.id << ". Target minimum cut size: " << min_cut_size << std::endl;
@@ -45,9 +48,19 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
     size_t total_edges_added = 0;
     size_t degree_corrected_edges = 0;
     
+    // Pre-compute existing edges once for efficiency
+    auto existing_edges = statics::compute_existing_edges(g);
+    auto edge_exists = statics::create_edge_exists_checker(existing_edges);
+    
     while (true) {
         iteration++;
         std::cout << "\n--- Iteration " << iteration << " ---" << std::endl;
+        
+        // Check timeout
+        if (std::chrono::steady_clock::now() - start_time > MAX_TIME) {
+            std::cout << "Timeout reached, stopping mincut enforcement" << std::endl;
+            break;
+        }
         
         // Get current minimum cut
         MincutResult result = compute_mincut(g);
@@ -84,114 +97,89 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
             return;
         }
         
-        // Track edges to add (avoid duplicates and existing edges)
-        std::vector<std::pair<uint32_t, uint32_t>> edges_to_add;
+        // OPTIMIZATION: Pre-compute all valid cross-partition edges
+        std::cout << "Pre-filtering valid cross-partition edges..." << std::endl;
         
-        // Use statics.h for efficient edge existence checking
-        auto existing_edges = statics::compute_existing_edges(g);
-        auto edge_exists = statics::create_edge_exists_checker(existing_edges);
+        std::vector<std::pair<uint32_t, uint32_t>> valid_budget_edges;  // Both nodes have budget
+        std::vector<std::pair<uint32_t, uint32_t>> valid_mixed_edges;   // One node has budget  
+        std::vector<std::pair<uint32_t, uint32_t>> valid_any_edges;     // Neither has budget
         
-        // Categorize nodes by available budget using LOCAL data
-        std::vector<uint32_t> light_available, light_all;
-        std::vector<uint32_t> heavy_available, heavy_all;
-        
-        // Build light partition candidate lists
-        for (unsigned int node : light_partition) {
-            light_all.push_back(node);
+        for (unsigned int light_node : light_partition) {
+            uint64_t light_node_id = g.id_map[light_node];
+            bool light_has_budget = task.get_local_available_degree(light_node_id) > 0;
             
-            uint64_t node_id = g.id_map[node];
-            if (task.get_local_available_degree(node_id) > 0) {
-                light_available.push_back(node);
-            }
-        }
-        
-        // Build heavy partition candidate lists
-        for (unsigned int node : heavy_partition) {
-            heavy_all.push_back(node);
-            
-            uint64_t node_id = g.id_map[node];
-            if (task.get_local_available_degree(node_id) > 0) {
-                heavy_available.push_back(node);
-            }
-        }
-
-        std::cout << "Light partition: " << light_available.size() 
-                  << " with budget, " << light_all.size() - light_available.size() << " without" << std::endl;
-        std::cout << "Heavy partition: " << heavy_available.size() 
-                  << " with budget, " << heavy_all.size() - heavy_available.size() << " without" << std::endl;
-        
-        // Add edges using random selection with budget prioritization
-        for (uint32_t edge_count = 0; edge_count < edges_needed; ++edge_count) {
-            uint32_t selected_light = UINT32_MAX;
-            uint32_t selected_heavy = UINT32_MAX;
-            bool found_edge = false;
-            
-            // Selection priority:
-            // Priority 1: Both sides have available budget
-            if (!light_available.empty() && !heavy_available.empty()) {
-                std::uniform_int_distribution<size_t> dist_light(0, light_available.size() - 1);
-                std::uniform_int_distribution<size_t> dist_heavy(0, heavy_available.size() - 1);
-                selected_light = light_available[dist_light(gen)];
-                selected_heavy = heavy_available[dist_heavy(gen)];
-                found_edge = true;
-            }
-            // Priority 2: Light has budget, heavy any
-            else if (!light_available.empty() && !heavy_all.empty()) {
-                std::uniform_int_distribution<size_t> dist_light(0, light_available.size() - 1);
-                std::uniform_int_distribution<size_t> dist_heavy(0, heavy_all.size() - 1);
-                selected_light = light_available[dist_light(gen)];
-                selected_heavy = heavy_all[dist_heavy(gen)];
-                found_edge = true;
-            }
-            // Priority 2: Light any, heavy has budget
-            else if (!light_all.empty() && !heavy_available.empty()) {
-                std::uniform_int_distribution<size_t> dist_light(0, light_all.size() - 1);
-                std::uniform_int_distribution<size_t> dist_heavy(0, heavy_available.size() - 1);
-                selected_light = light_all[dist_light(gen)];
-                selected_heavy = heavy_available[dist_heavy(gen)];
-                found_edge = true;
-            }
-            // Priority 3: Neither side has budget (fallback)
-            else if (!light_all.empty() && !heavy_all.empty()) {
-                std::uniform_int_distribution<size_t> dist_light(0, light_all.size() - 1);
-                std::uniform_int_distribution<size_t> dist_heavy(0, heavy_all.size() - 1);
-                selected_light = light_all[dist_light(gen)];
-                selected_heavy = heavy_all[dist_heavy(gen)];
-                found_edge = true;
-            }
-            
-            if (!found_edge) {
-                std::cout << "Warning: Could not find nodes for cross-partition edge " 
-                          << (edge_count + 1) << "/" << edges_needed << std::endl;
-                break;
-            }
-            
-            // Check if edge already exists
-            uint32_t u = std::min(selected_light, selected_heavy);
-            uint32_t v = std::max(selected_light, selected_heavy);
-            
-            if (edge_exists(u, v)) {
-                // Skip existing edge, but don't count against our limit
-                edge_count--;
-                continue;
-            }
-            
-            // Check if already in our planned edges
-            bool already_planned = false;
-            for (const auto& edge : edges_to_add) {
-                if (edge.first == u && edge.second == v) {
-                    already_planned = true;
-                    break;
+            for (unsigned int heavy_node : heavy_partition) {
+                uint64_t heavy_node_id = g.id_map[heavy_node];
+                bool heavy_has_budget = task.get_local_available_degree(heavy_node_id) > 0;
+                
+                uint32_t u = std::min(light_node, heavy_node);
+                uint32_t v = std::max(light_node, heavy_node);
+                
+                // Skip if edge already exists
+                if (edge_exists(u, v)) {
+                    continue;
+                }
+                
+                // Categorize by budget availability
+                if (light_has_budget && heavy_has_budget) {
+                    valid_budget_edges.emplace_back(u, v);
+                } else if (light_has_budget || heavy_has_budget) {
+                    valid_mixed_edges.emplace_back(u, v);
+                } else {
+                    valid_any_edges.emplace_back(u, v);
                 }
             }
+        }
+        
+        std::cout << "Found " << valid_budget_edges.size() << " edges with both nodes having budget, "
+                  << valid_mixed_edges.size() << " edges with one node having budget, "
+                  << valid_any_edges.size() << " edges with no budget" << std::endl;
+        
+        // Combine edge pools in priority order
+        std::vector<std::pair<uint32_t, uint32_t>> candidate_edges;
+        candidate_edges.reserve(valid_budget_edges.size() + valid_mixed_edges.size() + valid_any_edges.size());
+        
+        // Priority 1: Both nodes have budget
+        candidate_edges.insert(candidate_edges.end(), valid_budget_edges.begin(), valid_budget_edges.end());
+        
+        // Priority 2: One node has budget
+        candidate_edges.insert(candidate_edges.end(), valid_mixed_edges.begin(), valid_mixed_edges.end());
+        
+        // Priority 3: Neither node has budget (fallback)
+        candidate_edges.insert(candidate_edges.end(), valid_any_edges.begin(), valid_any_edges.end());
+        
+        if (candidate_edges.empty()) {
+            std::cout << "TERMINATION: No valid cross-partition edges available. "
+                      << "All possible cross-partition edges already exist." << std::endl;
+            std::cout << "Maximum achievable cut size with current partitioning: " << current_cut_size << std::endl;
+            return;
+        }
+        
+        // Randomly shuffle candidates to ensure randomness within priority groups
+        if (!valid_budget_edges.empty()) {
+            std::shuffle(candidate_edges.begin(), 
+                        candidate_edges.begin() + valid_budget_edges.size(), gen);
+        }
+        if (!valid_mixed_edges.empty()) {
+            std::shuffle(candidate_edges.begin() + valid_budget_edges.size(), 
+                        candidate_edges.begin() + valid_budget_edges.size() + valid_mixed_edges.size(), gen);
+        }
+        if (!valid_any_edges.empty()) {
+            std::shuffle(candidate_edges.begin() + valid_budget_edges.size() + valid_mixed_edges.size(), 
+                        candidate_edges.end(), gen);
+        }
+        
+        // Select edges to add (up to what we need and what's available)
+        size_t edges_to_select = std::min(static_cast<size_t>(edges_needed), candidate_edges.size());
+        std::vector<std::pair<uint32_t, uint32_t>> edges_to_add;
+        
+        std::cout << "Selecting " << edges_to_select << " edges from " << candidate_edges.size() 
+                  << " candidates..." << std::endl;
+        
+        for (size_t i = 0; i < edges_to_select; ++i) {
+            uint32_t u = candidate_edges[i].first;
+            uint32_t v = candidate_edges[i].second;
             
-            if (already_planned) {
-                // Skip already planned edge, but don't count against our limit
-                edge_count--;
-                continue;
-            }
-            
-            // Add the edge
             edges_to_add.emplace_back(u, v);
             total_edges_added++;
             
@@ -206,15 +194,10 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
             task.consume_local_degree(u_id, 1);
             task.consume_local_degree(v_id, 1);
             
-            std::cout << "Cross-partition edge " << (edge_count + 1) << "/" << edges_needed 
-                      << ": " << selected_light << " <-> " << selected_heavy << std::endl;
-        }
-        
-        if (edges_to_add.empty()) {
-            std::cout << "TERMINATION: No more edges can be added between partitions. "
-                      << "All possible cross-partition edges already exist." << std::endl;
-            std::cout << "Maximum achievable cut size with current partitioning: " << current_cut_size << std::endl;
-            return;
+            if ((i + 1) % 10 == 0 || i == edges_to_select - 1) {
+                std::cout << "Selected cross-partition edge " << (i + 1) << "/" << edges_to_select 
+                          << ": " << u << " <-> " << v << std::endl;
+            }
         }
         
         std::cout << "Adding " << edges_to_add.size() << " new cross-partition edges..." << std::endl;
@@ -236,7 +219,11 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
     // Report final local available nodes
     const auto& final_available = task.get_local_available_nodes();
     
-    std::cout << "Mincut enforcement completed. Total edges added: " << total_edges_added 
+    auto end_time = std::chrono::steady_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time);
+    
+    std::cout << "Mincut enforcement completed in " << duration.count() << " seconds. "
+              << "Total edges added: " << total_edges_added 
               << ", Degree corrected: " << degree_corrected_edges 
               << " (" << (total_edges_added > 0 ? (degree_corrected_edges * 100 / total_edges_added) : 0) 
               << "%). Remaining local budget nodes: " << final_available.size() << std::endl;
