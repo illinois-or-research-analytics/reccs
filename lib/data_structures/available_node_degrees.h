@@ -4,89 +4,74 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <memory>
+#include <fstream>
+#include <iostream>
 #include "graph.h"
 
+using json = nlohmann::json;
+
 /**
- * Global immutable degree mapping - computed once, never modified
+ * Global immutable degree mapping - loaded from JSON, never modified
  * Each task gets its own local copy of relevant degrees
  */
 class AvailableNodeDegreesManager {
 private:
     // Global immutable mapping: node_id -> available_degree_budget
     std::unordered_map<uint64_t, int32_t> global_degree_budgets;
-    
-    // Reference degree sequence (for initialization)
-    std::shared_ptr<const std::vector<uint32_t>> reference_degrees;
-    
-    // Reference to synthetic graph (for initialization)
-    const Graph* synthetic_graph;
 
 public:
-    AvailableNodeDegreesManager(
-        const Graph& syn_graph,
-        std::shared_ptr<const std::vector<uint32_t>> ref_degrees)
-        : reference_degrees(ref_degrees), synthetic_graph(&syn_graph) {
-        
-        initialize_global_degree_budgets();
+    /**
+     * Constructor that loads degree deficits from JSON file
+     */
+    AvailableNodeDegreesManager(const std::string& json_filename) {
+        load_degree_budgets_from_json(json_filename);
     }
     
     /**
-     * Initialize global degree budgets once - never modified after this
+     * Load degree budgets from JSON file - called once during initialization
      */
-    void initialize_global_degree_budgets() {
-        std::cout << "Computing global degree budgets..." << std::endl;
+    void load_degree_budgets_from_json(const std::string& json_filename) {
+        std::cout << "Loading degree budgets from JSON: " << json_filename << std::endl;
         
-        // Collect all nodes and their synthetic degrees
-        std::unordered_map<uint64_t, uint32_t> synthetic_degrees;
-        for (uint32_t i = 0; i < synthetic_graph->num_nodes; ++i) {
-            uint64_t node_id = synthetic_graph->id_map[i];
-            synthetic_degrees[node_id] = synthetic_graph->get_degree(i);
+        std::ifstream file(json_filename);
+        if (!file.is_open()) {
+            throw std::runtime_error("Failed to open JSON file: " + json_filename);
         }
         
-        // Add missing nodes (not in synthetic graph) as degree 0
-        for (size_t i = 0; i < reference_degrees->size(); ++i) {
-            uint64_t node_id = i;  // Assuming dense node IDs
-            if (synthetic_degrees.find(node_id) == synthetic_degrees.end()) {
-                synthetic_degrees[node_id] = 0;  // Missing node has degree 0
-            }
-        }
+        json j;
+        file >> j;
+        file.close();
         
-        // Sort ALL nodes by synthetic degree (descending) for proper sequence matching
-        std::vector<std::pair<uint32_t, uint64_t>> sorted_all_degrees;  // (degree, node_id)
-        for (const auto& [node_id, degree] : synthetic_degrees) {
-            sorted_all_degrees.emplace_back(degree, node_id);
-        }
-        
-        std::sort(sorted_all_degrees.begin(), sorted_all_degrees.end(), 
-                  [](const auto& a, const auto& b) {
-                      return a.first > b.first;  // Sort by degree descending
-                  });
-        
-        // Match with reference sequence and compute global budgets
         size_t positive_budgets = 0;
-        for (size_t i = 0; i < sorted_all_degrees.size() && i < reference_degrees->size(); ++i) {
-            uint64_t node_id = sorted_all_degrees[i].second;
-            uint32_t synthetic_degree = sorted_all_degrees[i].first;
-            uint32_t reference_degree = (*reference_degrees)[i];
-            
-            int32_t budget = static_cast<int32_t>(reference_degree) - static_cast<int32_t>(synthetic_degree);
-            
-            // Store budget (can be negative, zero, or positive)
-            global_degree_budgets[node_id] = budget;
-            
-            if (budget > 0) {
-                positive_budgets++;
-            }
-            
-            // Debug output for first few nodes
-            if (i < 10) {
-                std::cout << "  Node " << node_id << ": ref=" << reference_degree 
-                          << ", syn=" << synthetic_degree << ", budget=" << budget << std::endl;
+        size_t nodes_loaded = 0;
+        
+        // Load node_id -> deficit mapping from JSON
+        for (const auto& [node_id_str, deficit] : j.items()) {
+            try {
+                uint64_t node_id = std::stoull(node_id_str);
+                int32_t budget = deficit.get<int32_t>();
+                
+                // Only store positive budgets (matching original Python logic)
+                if (budget > 0) {
+                    global_degree_budgets[node_id] = budget;
+                    positive_budgets++;
+                }
+                
+                nodes_loaded++;
+                
+                // Debug output for first few nodes
+                if (nodes_loaded <= 10) {
+                    std::cout << "  Node " << node_id << ": budget=" << budget << std::endl;
+                }
+                
+            } catch (const std::exception& e) {
+                std::cerr << "Warning: Failed to parse node " << node_id_str 
+                          << " with deficit " << deficit << ": " << e.what() << std::endl;
             }
         }
         
-        std::cout << "Global degree budgets computed: " << global_degree_budgets.size() 
-                  << " total nodes, " << positive_budgets << " with positive budget" << std::endl;
+        std::cout << "Loaded degree budgets: " << nodes_loaded << " total nodes processed, " 
+                  << positive_budgets << " with positive budget stored" << std::endl;
     }
     
     /**
@@ -98,18 +83,17 @@ public:
         
         std::unordered_map<uint64_t, int32_t> local_budgets;
         
-        // Extract only the nodes belonging to this cluster
+        // Extract only the nodes belonging to this cluster that have positive budgets
         for (uint64_t node_id : cluster_node_ids) {
             auto it = global_degree_budgets.find(node_id);
             if (it != global_degree_budgets.end()) {
-                local_budgets[node_id] = it->second;  // Copy the budget
-            } else {
-                local_budgets[node_id] = 0;  // Default to 0 if not found
+                local_budgets[node_id] = it->second;  // Copy the positive budget
             }
+            // Note: nodes with zero or negative budgets are not stored
         }
         
         std::cout << "Created local degrees for cluster with " << local_budgets.size() 
-                  << " nodes" << std::endl;
+                  << " nodes with positive budget" << std::endl;
         
         return local_budgets;  // Return by value - each task gets its own copy
     }
@@ -124,7 +108,7 @@ public:
         
         for (uint64_t node_id : cluster_node_ids) {
             auto it = global_degree_budgets.find(node_id);
-            if (it != global_degree_budgets.end() && it->second > 0) {
+            if (it != global_degree_budgets.end()) {
                 available_nodes.push_back(node_id);
             }
         }
@@ -148,14 +132,11 @@ public:
     
     AvailableStats get_stats() const {
         AvailableStats stats;
-        stats.total_available_nodes = 0;
+        stats.total_available_nodes = global_degree_budgets.size();
         stats.total_available_degrees = 0;
         
         for (const auto& [node_id, budget] : global_degree_budgets) {
-            if (budget > 0) {
-                stats.total_available_nodes++;
-                stats.total_available_degrees += budget;
-            }
+            stats.total_available_degrees += budget;
         }
         
         stats.avg_available_degree = (stats.total_available_nodes > 0) ? 

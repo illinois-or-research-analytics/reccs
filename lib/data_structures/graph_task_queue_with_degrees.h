@@ -137,20 +137,14 @@ public:
     GraphTaskQueueWithDegrees() = default;
     
     /**
-     * Initialize with reference degree sequence directly
+     * Initialize with degree deficits from JSON file
      */
-    void initialize_degree_manager(
-        const Graph& synthetic_graph,
-        std::shared_ptr<const std::vector<uint32_t>> reference_degrees) {
-        
-        // NOTE: Maybe we can just pass in a mapping from node ID to degree
-
-        degree_manager = std::make_shared<AvailableNodeDegreesManager>(
-            synthetic_graph, reference_degrees);
+    void initialize_degree_manager(const std::string& deficits_json_filename) {
+        degree_manager = std::make_shared<AvailableNodeDegreesManager>(deficits_json_filename);
             
         auto stats = degree_manager->get_stats();
-        std::cout << "Simplified degree manager initialized with " << stats.total_available_nodes 
-                  << " available nodes, total budget: " << stats.total_available_degrees << std::endl;
+        std::cout << "Degree manager initialized from JSON with " << stats.total_available_nodes 
+                << " available nodes, total budget: " << stats.total_available_degrees << std::endl;
     }
     
     void set_task_functions(

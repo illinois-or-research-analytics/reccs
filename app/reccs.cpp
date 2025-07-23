@@ -30,6 +30,7 @@
 
 #include "../lib/algorithm/deg_seq_matching.h"
 #include "../lib/algorithm/deg_seq_matching_v2.h"
+#include "../lib/algorithm/deg_seq_matching_with_budget.h"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -449,6 +450,13 @@ int main(int argc, char** argv) {
                 clustered_sbm_graph, newly_added_edges_raw, verbose);
 
         add_edges_batch(clustered_sbm_graph, newly_added_edges);
+
+        if (!use_v2) {
+            if (verbose) {
+                std::cout << "\nPerforming simple degree sequence matching (V1)..." << std::endl;
+            }
+            match_degree_sequence(clustered_sbm_graph, reference_degree_sequence);
+        }
         
     } else {
         if (verbose) {
@@ -460,7 +468,10 @@ int main(int argc, char** argv) {
         GraphTaskQueueWithDegrees task_queue;
 
         // Initialize degree manager
-        task_queue.initialize_degree_manager(clustered_sbm_graph, reference_degree_sequence);
+        task_queue.initialize_degree_manager(temp_dir + "/degree_deficits.json");
+
+        // Get the reference to the degree manager
+        auto degree_manager = task_queue.get_degree_manager();
 
         // Set degree-aware task functions
         task_queue.set_task_functions(
@@ -521,6 +532,14 @@ int main(int argc, char** argv) {
                 clustered_sbm_graph, newly_added_edges_raw, verbose);
 
         add_edges_batch(clustered_sbm_graph, newly_added_edges);
+
+        if (!use_v2) {
+            if (verbose) {
+                std::cout << "\nPerforming simple degree sequence matching (V1)..." << std::endl;
+            }
+            match_degree_sequence_with_budget(
+                clustered_sbm_graph, degree_manager);
+        }
     }
 
     // Degree sequence matching (common for both paths)
@@ -530,11 +549,6 @@ int main(int argc, char** argv) {
         }
         match_degree_sequence_v2(clustered_sbm_graph, temp_dir + "/non_singleton_edges.tsv", 
                                  temp_dir + "/non_singleton_clusters.tsv", temp_dir + "/sbm_output/");
-    } else {
-        if (verbose) {
-            std::cout << "\nPerforming simple degree sequence matching (V1)..." << std::endl;
-        }
-        match_degree_sequence(clustered_sbm_graph, reference_degree_sequence);
     }
 
     // Write final output
