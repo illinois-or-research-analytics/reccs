@@ -13,12 +13,13 @@
 #include "mincut_result.h"
 
 // Viecut includes
-#include "io/graph_io.h"
-#include "algorithms/global_mincut/noi_minimum_cut.h"
+#include "algorithms/global_mincut/algorithms.h"
+#include "algorithms/global_mincut/minimum_cut.h"
 #include "common/configuration.h"
 #include "common/definitions.h"
 #include "data_structure/graph_access.h"
 #include "data_structure/mutable_graph.h"
+#include "io/graph_io.h"
 #include "tlx/cmdline_parser.hpp"
 #include "tlx/logger.hpp"
 #include "tools/random_functions.h"
@@ -309,9 +310,9 @@ static std::shared_ptr<mutable_graph> convert_to_viecut(const Graph& g) {
 MincutResult compute_mincut(const Graph& g) {
     // Set the algorithm and queue type
     auto cfg = configuration::getConfig();
-    cfg->algorithm = "noi";
+    cfg->algorithm = "cactus";
     cfg->queue_type = "bqueue";
-    cfg->find_most_balanced_cut = false;
+    cfg->find_most_balanced_cut = true;
     cfg->save_cut = true;
 
     std::vector<int> light;
@@ -329,8 +330,7 @@ MincutResult compute_mincut(const Graph& g) {
     NodeID n = G->number_of_nodes();
     EdgeID m = G->number_of_edges();
 
-    //std::string algorithm = "noi"; // Default algorithm, can be changed via configuration
-    auto mc = new noi_minimum_cut<GraphPtr>();
+    auto mc = selectMincutAlgorithm<GraphPtr>("cactus");
 
     t.restart();
     EdgeWeight cut;

@@ -190,7 +190,7 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
                 degree_corrected_edges++;
             }
             
-            // Consume local budgets immediately (no contention!)
+            // Consume budgets immediately (no contention!)
             task.consume_local_degree(u_id, 1);
             task.consume_local_degree(v_id, 1);
             

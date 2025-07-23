@@ -15,14 +15,6 @@
  * Performance-optimized degree-aware minimum degree enforcement
  * Each task operates on its own local degree budgets - NO SHARED STATE!
  */
-/**
- * Ultra-high-performance minimum degree enforcement for million-node graphs
- * Trades some thread-safety for massive performance gains
- */
-/**
- * Ultra-high-performance minimum degree enforcement for million-node graphs
- * Trades some thread-safety for massive performance gains
- */
 void enforce_min_degree_with_budget(GraphTaskWithDegrees& task) {
     Graph& g = *task.subgraph;
     uint32_t min_degree = task.min_degree_requirement;

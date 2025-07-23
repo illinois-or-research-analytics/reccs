@@ -117,6 +117,7 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
                 std::cout << "Timeout reached, stopping connectivity enforcement" << std::endl;
                 break;
             }
+            
             // Build candidate lists for both sides
             std::vector<uint32_t> available_nodes_a, all_nodes_a;
             std::vector<uint32_t> available_nodes_b, all_nodes_b;
@@ -139,61 +140,60 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
                 }
             }
             
-            uint32_t selected_a = UINT32_MAX;
-            uint32_t selected_b = UINT32_MAX;
+            // Step 1: Select first endpoint (from component A)
+            uint32_t selected_a;
+            bool a_has_budget = false;
             
-            // Random selection strategy:
-            // Priority 1: Both nodes have available budget
-            // Priority 2: One node has available budget  
-            // Priority 3: Neither node has available budget (fallback)
-            
-            bool found_edge = false;
-            
-            // Priority 1: Try available from both sides
-            if (!available_nodes_a.empty() && !available_nodes_b.empty()) {
+            if (!available_nodes_a.empty()) {
                 std::uniform_int_distribution<size_t> dist_a(0, available_nodes_a.size() - 1);
-                std::uniform_int_distribution<size_t> dist_b(0, available_nodes_b.size() - 1);
                 selected_a = available_nodes_a[dist_a(gen)];
-                selected_b = available_nodes_b[dist_b(gen)];
-                found_edge = true;
-            }
-            // Priority 2: Try available from A, any from B
-            else if (!available_nodes_a.empty() && !all_nodes_b.empty()) {
-                std::uniform_int_distribution<size_t> dist_a(0, available_nodes_a.size() - 1);
-                std::uniform_int_distribution<size_t> dist_b(0, all_nodes_b.size() - 1);
-                selected_a = available_nodes_a[dist_a(gen)];
-                selected_b = all_nodes_b[dist_b(gen)];
-                found_edge = true;
-            }
-            // Priority 2: Try any from A, available from B
-            else if (!all_nodes_a.empty() && !available_nodes_b.empty()) {
+                a_has_budget = true;
+            } else {
                 std::uniform_int_distribution<size_t> dist_a(0, all_nodes_a.size() - 1);
-                std::uniform_int_distribution<size_t> dist_b(0, available_nodes_b.size() - 1);
                 selected_a = all_nodes_a[dist_a(gen)];
-                selected_b = available_nodes_b[dist_b(gen)];
-                found_edge = true;
-            }
-            // Priority 3: Fallback to any from both sides
-            else if (!all_nodes_a.empty() && !all_nodes_b.empty()) {
-                std::uniform_int_distribution<size_t> dist_a(0, all_nodes_a.size() - 1);
-                std::uniform_int_distribution<size_t> dist_b(0, all_nodes_b.size() - 1);
-                selected_a = all_nodes_a[dist_a(gen)];
-                selected_b = all_nodes_b[dist_b(gen)];
-                found_edge = true;
             }
             
-            if (!found_edge) {
-                std::cerr << "Warning: Could not find nodes to connect components" << std::endl;
+            // Step 2: Apply neighbor exclusion - remove neighbors of selected_a from component B candidates
+            std::unordered_set<uint32_t> neighbors_of_a;
+            for (uint32_t idx = g.row_ptr[selected_a]; idx < g.row_ptr[selected_a + 1]; ++idx) {
+                neighbors_of_a.insert(g.col_idx[idx]);
+            }
+            
+            // Filter available nodes in component B (exclude neighbors)
+            std::vector<uint32_t> filtered_available_b;
+            for (uint32_t node : available_nodes_b) {
+                if (neighbors_of_a.find(node) == neighbors_of_a.end()) {
+                    filtered_available_b.push_back(node);
+                }
+            }
+            
+            // Filter all nodes in component B (exclude neighbors)  
+            std::vector<uint32_t> filtered_all_b;
+            for (uint32_t node : all_nodes_b) {
+                if (neighbors_of_a.find(node) == neighbors_of_a.end()) {
+                    filtered_all_b.push_back(node);
+                }
+            }
+            
+            // Step 3: Select second endpoint (from filtered component B)
+            uint32_t selected_b;
+            bool b_has_budget = false;
+            
+            if (!filtered_available_b.empty()) {
+                std::uniform_int_distribution<size_t> dist_b(0, filtered_available_b.size() - 1);
+                selected_b = filtered_available_b[dist_b(gen)];
+                b_has_budget = true;
+            } else if (!filtered_all_b.empty()) {
+                std::uniform_int_distribution<size_t> dist_b(0, filtered_all_b.size() - 1);
+                selected_b = filtered_all_b[dist_b(gen)];
+            } else {
+                std::cerr << "Warning: Could not find non-adjacent nodes to connect components" << std::endl;
                 break;
             }
             
-            // Check if edge already exists or is already planned
+            // No need to check if edge exists since neighbor exclusion guarantees it doesn't
             uint32_t u = std::min(selected_a, selected_b);
             uint32_t v = std::max(selected_a, selected_b);
-            
-            if (edge_exists_fast(u, v)) {
-                continue; // Skip existing edge
-            }
             
             // Check if already in our planned edges
             bool already_planned = false;
@@ -213,13 +213,13 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
             total_edges_added++;
             
             // Track if this edge uses available degree budget using LOCAL data
-            uint64_t u_id = g.id_map[u];
-            uint64_t v_id = g.id_map[v];
-            if (task.get_local_available_degree(u_id) > 0 || task.get_local_available_degree(v_id) > 0) {
+            if (a_has_budget || b_has_budget) {
                 degree_corrected_edges++;
             }
             
             // Consume local budgets (no contention!)
+            uint64_t u_id = g.id_map[u];
+            uint64_t v_id = g.id_map[v];
             task.consume_local_degree(u_id, 1);
             task.consume_local_degree(v_id, 1);
             

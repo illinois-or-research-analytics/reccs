@@ -91,7 +91,7 @@ def get_probs_optimized(G_c, node_mapping, cluster_df, logger, n_threads=None):
         n_threads = os.cpu_count() or 4
     
     numerical_to_string_mapping = {v: k for k, v in node_mapping.items()}
-    cluster_ids, counts = np.unique(cluster_df['cluster_id'], return_counts=True)
+    cluster_ids, _ = np.unique(cluster_df['cluster_id'], return_counts=True)
     num_clusters = len(cluster_ids)
     
     node_to_cluster_dict = cluster_df.set_index('node_id')['cluster_id'].to_dict()

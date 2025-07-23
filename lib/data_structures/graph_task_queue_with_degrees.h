@@ -143,6 +143,8 @@ public:
         const Graph& synthetic_graph,
         std::shared_ptr<const std::vector<uint32_t>> reference_degrees) {
         
+        // NOTE: Maybe we can just pass in a mapping from node ID to degree
+
         degree_manager = std::make_shared<AvailableNodeDegreesManager>(
             synthetic_graph, reference_degrees);
             

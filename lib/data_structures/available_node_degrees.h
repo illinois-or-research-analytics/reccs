@@ -132,20 +132,6 @@ public:
         return available_nodes;
     }
     
-    /**
-     * Legacy methods for compatibility (not needed with local degrees approach)
-     */
-    void precompute_cluster_available_nodes(
-        const std::string& cluster_id,
-        const std::unordered_set<uint64_t>& cluster_nodes) {
-        // No-op - each task creates its own local degrees
-    }
-    
-    std::vector<uint64_t> get_cluster_available_nodes(const std::string& cluster_id) const {
-        // No-op - each task has its own local degrees
-        return {};
-    }
-    
     int32_t get_available_degree(uint64_t node_id) const {
         auto it = global_degree_budgets.find(node_id);
         return (it != global_degree_budgets.end()) ? it->second : 0;
