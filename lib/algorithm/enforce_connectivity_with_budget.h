@@ -70,8 +70,8 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
     std::cout << "Found " << components.size() << " components, connecting with " 
               << min_degree << " edges..." << std::endl;    
 
-    // Initialize local degrees for this task (lazy initialization)
-    task.initialize_local_degrees();
+    // // Initialize local degrees for this task (lazy initialization)
+    // task.initialize_local_degrees();
     
     // Get local available nodes (no shared state!)
     const auto& local_available_nodes = task.get_local_available_nodes();
@@ -100,7 +100,7 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
     
     // Strategy: Draw min_degree_requirement edges between components using random selection
     
-    // Pick two largest components as the main partitions to connect
+    // Pick largest component as the main partitions to connect
     std::sort(components.begin(), components.end(), 
               [](const std::vector<uint32_t>& a, const std::vector<uint32_t>& b) {
                   return a.size() > b.size();

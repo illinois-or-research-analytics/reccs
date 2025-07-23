@@ -13,7 +13,7 @@
 #include <omp.h>
 #include "graph.h"
 #include "clustering.h"
-#include "available_node_degrees.h" // Our new header
+#include "available_node_degrees.h" // Our updated header with atomic manager
 #include "../io/requirements_io.h"
 
 using json = nlohmann::json;
@@ -25,19 +25,19 @@ private:
     std::atomic<size_t> tasks_processed{0};
     std::atomic<size_t> total_tasks_created{0};
 
-    // Shared available degrees manager
+    // Shared atomic degrees manager - used by ALL threads
     std::shared_ptr<AvailableNodeDegreesManager> degree_manager;
     
     // Store completed subgraphs for post-processing
     mutable std::mutex completed_subgraphs_mutex;
     std::vector<std::shared_ptr<Graph>> completed_subgraphs;
     
-    // Task functions - now take the enhanced task type
+    // Task functions - now take the atomic task type
     std::function<void(GraphTaskWithDegrees&)> min_deg_enforce_fn;
     std::function<void(GraphTaskWithDegrees&)> cc_stitching_fn;
     std::function<void(GraphTaskWithDegrees&)> wcc_stitching_fn;
     
-    // Extract subgraph for a cluster (same as before)
+    // Extract subgraph for a cluster (unchanged)
     std::shared_ptr<Graph> extract_subgraph(const Graph& original, 
                                            const std::unordered_set<uint32_t>& nodes, 
                                            const std::unordered_set<uint32_t>& missing_nodes = {}) {
@@ -137,14 +137,14 @@ public:
     GraphTaskQueueWithDegrees() = default;
     
     /**
-     * Initialize with degree deficits from JSON file
+     * Initialize with degree deficits from JSON file - creates shared atomic manager
      */
     void initialize_degree_manager(const std::string& deficits_json_filename) {
         degree_manager = std::make_shared<AvailableNodeDegreesManager>(deficits_json_filename);
             
         auto stats = degree_manager->get_stats();
-        std::cout << "Degree manager initialized from JSON with " << stats.total_available_nodes 
-                << " available nodes, total budget: " << stats.total_available_degrees << std::endl;
+        std::cout << "Atomic degree manager initialized from JSON with " << stats.total_available_nodes 
+                  << " available nodes, total budget: " << stats.total_available_degrees << std::endl;
     }
     
     void set_task_functions(
@@ -160,7 +160,7 @@ public:
     void initialize_queue(const Graph& graph, const Clustering& clustering,
                          const ConnectivityRequirementsLoader& requirements) {
         if (!degree_manager) {
-            throw std::runtime_error("Degree manager must be initialized before queue initialization");
+            throw std::runtime_error("Atomic degree manager must be initialized before queue initialization");
         }
         
         {
@@ -173,7 +173,7 @@ public:
         tasks_processed = 0;
         total_tasks_created = 0;
         
-        // Now create tasks for each cluster
+        // Create tasks for each cluster
         for (uint32_t cluster_idx = 0; cluster_idx < clustering.cluster_nodes.size(); cluster_idx++) {
             const auto& nodes = clustering.cluster_nodes[cluster_idx];
             const auto& missing_nodes = clustering.cluster_missing_nodes[cluster_idx];
@@ -219,14 +219,14 @@ public:
                 cluster_node_ids.insert(missing_node);
             }
             
-            // Create enhanced task
+            // Create task with shared atomic degree manager
             add_task(GraphTaskWithDegrees(
                 subgraph,
                 TaskType::MIN_DEG_ENFORCE,
                 cluster_id,
                 cluster_idx,
                 min_degree,
-                degree_manager,
+                degree_manager,  // Shared across ALL tasks
                 cluster_node_ids
             ));
         }
@@ -244,12 +244,12 @@ public:
 
         int thread_id = omp_get_thread_num();
         
-        // Print current degree manager stats
+        // Print current atomic degree manager stats
         auto stats = degree_manager->get_stats();
         std::cout << "[Thread " << thread_id << "] Processing " 
                   << get_task_name(task.task_type) << " for cluster " << task.cluster_id 
                   << " (Available nodes: " << stats.total_available_nodes 
-                  << ", Budget: " << stats.total_available_degrees << ")" << std::endl;
+                  << ", Remaining budget: " << stats.total_available_degrees << ")" << std::endl;
         
         switch (task.task_type) {
             case TaskType::MIN_DEG_ENFORCE:
@@ -289,7 +289,8 @@ public:
     void process_all_tasks() {
         int num_threads = omp_get_max_threads();
         
-        std::cout << "Starting work-stealing processing with " << num_threads << " threads" << std::endl;
+        std::cout << "Starting work-stealing processing with " << num_threads 
+                  << " threads using shared atomic degree manager" << std::endl;
         
         #pragma omp parallel num_threads(num_threads)
         {
@@ -305,10 +306,15 @@ public:
             }
         }
         
+        // Print final statistics
+        auto final_stats = degree_manager->get_stats();
         std::cout << "Processed " << tasks_processed.load() << " tasks total" << std::endl;
+        std::cout << "Final degree budget: " << final_stats.total_available_nodes 
+                  << " nodes with " << final_stats.total_available_degrees 
+                  << " remaining degrees" << std::endl;
     }
     
-    // Access to degree manager for external use
+    // Access to atomic degree manager for external use
     std::shared_ptr<AvailableNodeDegreesManager> get_degree_manager() const {
         return degree_manager;
     }

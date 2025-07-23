@@ -85,7 +85,7 @@ void match_degree_sequence_with_budget(
 
     // Main algorithm loop - matches Python logic exactly
     std::cout << "[Graph " << g.id << "]: Starting degree deficit matching..." << std::endl;
-    while (!max_heap.empty() && !available_node_set.empty()) {
+    while (!max_heap.empty()) {
         NodeDegree current = max_heap.top();
         max_heap.pop();
         
@@ -105,15 +105,15 @@ void match_degree_sequence_with_budget(
         }
         neighbors.insert(available_node); // Add self to avoid self-loops
 
-        // Build available non-neighbors from available_node_set
+        // Build available non-neighbors using set difference
         std::vector<uint32_t> available_non_neighbors;
         available_non_neighbors.reserve(available_node_set.size());
         
-        for (uint32_t candidate : available_node_set) {
-            if (neighbors.find(candidate) == neighbors.end()) {
-                available_non_neighbors.push_back(candidate);
-            }
-        }
+        std::set_difference(
+            available_node_set.begin(), available_node_set.end(),
+            neighbors.begin(), neighbors.end(),
+            std::back_inserter(available_non_neighbors)
+        );
 
         uint32_t avail_k = std::min(avail_degree, static_cast<uint32_t>(available_non_neighbors.size()));
         
@@ -121,15 +121,8 @@ void match_degree_sequence_with_budget(
         for (uint32_t i = 0; i < avail_k; ++i) {
             if (available_non_neighbors.empty()) break;
             
-            // Use swap-and-pop for efficient random selection
-            std::uniform_int_distribution<size_t> dist(0, available_non_neighbors.size() - 1);
-            size_t random_index = dist(gen);
-            
-            uint32_t edge_end = available_non_neighbors[random_index];
-            
-            // Swap with last element and pop (efficient removal)
-            std::swap(available_non_neighbors[random_index], available_non_neighbors.back());
-            available_non_neighbors.pop_back();
+            uint32_t edge_end = available_non_neighbors.back();  // Take last element
+            available_non_neighbors.pop_back();                  // Remove last element
             
             // Add the edge
             g.add_edge(available_node, edge_end);
@@ -140,10 +133,6 @@ void match_degree_sequence_with_budget(
             if (available_node_degrees[edge_end] == 0) {
                 available_node_set.erase(edge_end);
                 available_node_degrees.erase(edge_end);
-            } else {
-                // Add updated node back to heap
-                max_heap.emplace(NodeDegree{edge_end, 
-                    static_cast<int32_t>(available_node_degrees[edge_end])});
             }
         }
 

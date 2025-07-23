@@ -52,7 +52,7 @@ void enforce_min_degree_with_budget(GraphTaskWithDegrees& task) {
     auto edge_exists = statics::create_edge_exists_checker(existing_edges);
     
     // OPTIMIZATION: Use the existing available nodes list from task
-    task.initialize_local_degrees();
+    // task.initialize_local_degrees();
     const auto& available_node_ids = task.get_local_available_nodes(); // uint64_t global IDs
     
     // Convert to local subgraph indices and create fast lookup

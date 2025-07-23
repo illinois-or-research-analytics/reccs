@@ -28,7 +28,7 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
               << g.id << ". Target minimum cut size: " << min_cut_size << std::endl;
 
     // Initialize local degrees for this task (lazy initialization)
-    task.initialize_local_degrees();
+    // task.initialize_local_degrees();
     
     // Get local available nodes (no shared state!)
     const auto& local_available_nodes = task.get_local_available_nodes();
