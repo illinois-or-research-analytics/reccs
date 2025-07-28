@@ -25,7 +25,8 @@ void match_degree_sequence_v2(
     Graph& g, 
     std::string empirical_graph_path, 
     std::string clustering_path, 
-    const std::string& temp_dir) {
+    const std::string& temp_dir,
+    std::string output_file) {
 
     // Create temp directory if it doesn't exist
     std::filesystem::create_directories(temp_dir);
@@ -58,50 +59,21 @@ void match_degree_sequence_v2(
 
     std::cout << "Hybrid SBM script completed successfully" << std::endl;
 
-    // Step 3: Load generated edges and add them to the graph
-    std::string new_edges_file = temp_dir + "/sbm_output/new_edges.tsv";
-    
-    if (!std::filesystem::exists(new_edges_file)) {
-        std::cerr << "Warning: No new edges file generated: " << new_edges_file << std::endl;
+    // Call the tsv union script to merge results
+    std::string append_command = "python3 extlib/tsv_union.py";
+    append_command += " " + temp_dir + "/current_edges.tsv"; // Current graph
+    append_command += " " + temp_dir + "/sbm_output/new_edges.tsv"; // New edges from SBM
+    append_command += " " + output_file; // Final output file
+
+    std::cout << "Executing TSV union command: " << append_command << std::endl;
+
+    // Execute the append command
+    result = std::system(append_command.c_str());
+
+    if (result != 0) {
+        std::cerr << "Error: TSV union script failed with return code " << result << std::endl;
         return;
     }
-
-    // Load and add edges using existing infrastructure
-    std::ifstream file(new_edges_file);
-    if (!file.is_open()) {
-        std::cerr << "Warning: Could not open edges file " << new_edges_file << std::endl;
-        return;
-    }
-
-    std::vector<std::pair<uint32_t, uint32_t>> edges_to_add;
-    std::string line;
-    
-    while (std::getline(file, line)) {
-        if (line.empty()) continue;
-        
-        std::istringstream iss(line);
-        std::string source_str, target_str;
-        
-        if (std::getline(iss, source_str, '\t') && std::getline(iss, target_str)) {
-            try {
-                uint32_t source = std::stoull(source_str);
-                uint32_t target = std::stoull(target_str);
-                edges_to_add.emplace_back(source, target);
-            } catch (const std::exception& e) {
-                std::cerr << "Warning: Could not parse edge: " << line << " - " << e.what() << std::endl;
-            }
-        }
-    }
-    
-    file.close();
-    
-    // Add edges using batch method
-    size_t initial_edges = g.num_edges;
-    add_edges_batch(g, edges_to_add);
-    uint32_t edges_added = g.num_edges - initial_edges;
-    
-    std::cout << "[Graph " << g.id << "]: Successfully added " << edges_added 
-              << " edges using hybrid SBM generation" << std::endl;
 }
 
 #endif // DEG_SEQ_MATCHING_V2_H

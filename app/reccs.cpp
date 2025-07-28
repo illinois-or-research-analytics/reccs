@@ -8,7 +8,6 @@
 #include <unordered_set>
 #include "../lib/data_structures/graph.h"
 #include "../lib/data_structures/clustering.h"
-#include "../lib/data_structures/graph_task_queue.h"
 #include "../lib/data_structures/graph_task_queue_with_degrees.h" // Modified include
 #include "../lib/io/g_io.h"
 #include "../lib/io/cluster_io.h"
@@ -18,19 +17,12 @@
 #include "../lib/utils/edge_extractor.h"
 #include "../lib/utils/statics.h"
 
-// Include the original algorithms
-#include "../lib/algorithm/enforce_min_degree.h"
-#include "../lib/algorithm/enforce_connectivity.h"
-#include "../lib/algorithm/enforce_mincut.h"
-
-// Include the new degree-aware algorithms
 #include "../lib/algorithm/enforce_min_degree_with_budget.h"
 #include "../lib/algorithm/enforce_connectivity_with_budget.h"
 #include "../lib/algorithm/enforce_mincut_with_budget.h"
 
-#include "../lib/algorithm/deg_seq_matching.h"
 #include "../lib/algorithm/deg_seq_matching_v2.h"
-#include "../lib/algorithm/deg_seq_matching_with_budget.h"
+#include "../lib/algorithm/deg_seq_matching_v1.h"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -42,10 +34,6 @@ void print_usage(const char* program_name) {
     std::cerr << "Note: In normal mode, <edgelist.tsv> must be the first argument." << std::endl;
     std::cerr << "      In checkpoint mode, --checkpoint must be the first argument." << std::endl;
     std::cerr << std::endl;
-    std::cerr << "Processing Modes:" << std::endl;
-    std::cerr << "  Standard mode (default): Uses degree budget tracking for better quality" << std::endl;
-    std::cerr << "  Fast mode:              Faster processing without degree budget tracking" << std::endl;
-    std::cerr << std::endl;
     std::cerr << "Common options:" << std::endl;
     std::cerr << "  -c <clusters.tsv> Load clusters from TSV file (required)" << std::endl;
     std::cerr << "  -e <empirical.tsv> Load empirical graph for degree budget tracking (standard mode)" << std::endl;
@@ -54,7 +42,6 @@ void print_usage(const char* program_name) {
     std::cerr << "  -o <output_file>  Output file (default: 'output.tsv')" << std::endl;
     std::cerr << "  -h, --help        Show this help message and exit" << std::endl;
     std::cerr << "  --v2              Use V2 degree sequence fitting with SBM." << std::endl;
-    std::cerr << "  --fast            Enable fast mode (disable degree budget tracking)" << std::endl;
     std::cerr << std::endl;
     std::cerr << "Normal mode specific options:" << std::endl;
     std::cerr << "  <edgelist.tsv>                   Input graph edgelist file (used as empirical graph)" << std::endl;
@@ -67,22 +54,13 @@ void print_usage(const char* program_name) {
     std::cerr << "  --degseq <path>                 Path to degree sequence JSON file" << std::endl;
     std::cerr << std::endl;
     std::cerr << "Examples:" << std::endl;
-    std::cerr << "  Standard mode (recommended):" << std::endl;
     std::cerr << "    " << program_name << " graph.tsv -c clusters.tsv -t 8 -v -o output.tsv" << std::endl;
     std::cerr << std::endl;
-    std::cerr << "  Fast mode (for speed):" << std::endl;
-    std::cerr << "    " << program_name << " graph.tsv -c clusters.tsv --fast -t 8 -v -o output.tsv" << std::endl;
-    std::cerr << "    Note: Fast mode disables degree budget tracking for speed, which may impact the quality of the results." << std::endl;
-    std::cerr << std::endl;
-    std::cerr << "  Checkpoint mode with separate empirical graph (standard):" << std::endl;
+    std::cerr << "  Checkpoint mode with separate empirical graph:" << std::endl;
     std::cerr << "    " << program_name << " --checkpoint -c clusters.tsv -e empirical.tsv \\" << std::endl;
     std::cerr << "      --clustered-sbm clustered.tsv --unclustered-sbm unclustered.tsv \\" << std::endl;
     std::cerr << "      --requirements requirements.csv --degseq degseq.json -v -o output.tsv" << std::endl;
     std::cerr << std::endl;
-    std::cerr << "  Checkpoint mode (fast):" << std::endl;
-    std::cerr << "    " << program_name << " --checkpoint -c clusters.tsv --fast \\" << std::endl;
-    std::cerr << "      --clustered-sbm clustered.tsv --unclustered-sbm unclustered.tsv \\" << std::endl;
-    std::cerr << "      --requirements requirements.csv --degseq degseq.json -v -o output.tsv" << std::endl;
 }
 
 struct CheckpointArgs {
@@ -148,7 +126,6 @@ int main(int argc, char** argv) {
     bool verbose = false;
     bool checkpoint_mode = false;
     bool use_v2 = false;
-    bool fast_mode = false; // Renamed from disable_budget
     CheckpointArgs checkpoint_args;
     
     // Check if first argument is --checkpoint
@@ -162,8 +139,6 @@ int main(int argc, char** argv) {
                 verbose = true;
             } else if (arg == "--v2") {
                 use_v2 = true;
-            } else if (arg == "--fast") {  // Changed from --no-budget
-                fast_mode = true;
             } else if (arg == "-t" && i + 1 < argc) {
                 num_threads = std::stoi(argv[++i]);
             } else if (arg == "-o" && i + 1 < argc) {
@@ -243,8 +218,6 @@ int main(int argc, char** argv) {
                 verbose = true;
             } else if (arg == "--v2") {
                 use_v2 = true;
-            } else if (arg == "--fast") {  // Changed from --no-budget
-                fast_mode = true;
             } else if (arg == "-t" && i + 1 < argc) {
                 num_threads = std::stoi(argv[++i]);
             } else if (arg == "-c" && i + 1 < argc) {
@@ -281,20 +254,6 @@ int main(int argc, char** argv) {
     
     auto start_time = std::chrono::high_resolution_clock::now();
     
-    // Print processing mode information
-    if (verbose) {
-        if (fast_mode) {
-            std::cout << "=== FAST MODE PROCESSING ===" << std::endl;
-            std::cout << "Fast mode: Enabled (no degree budget tracking)" << std::endl;
-            std::cout << "Processing will be faster but may produce lower quality results." << std::endl;
-        } else {
-            std::cout << "=== STANDARD MODE PROCESSING ===" << std::endl;
-            std::cout << "Standard mode: Enabled (with degree budget tracking)" << std::endl;
-            std::cout << "Processing will be slower but produce higher quality results." << std::endl;
-        }
-        std::cout << std::endl;
-    }
-    
     std::string clustered_sbm_graph_path;
     std::string unclustered_sbm_graph_path;
     std::string requirements_filename;
@@ -314,7 +273,6 @@ int main(int argc, char** argv) {
         if (use_v2) {
             temp_dir = "temp_v2_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
         }
-        
     } else {
         // Normal mode - run orchestrator
         if (verbose) {
@@ -406,157 +364,104 @@ int main(int argc, char** argv) {
         requirements_loader.print_statistics();
     }
 
-    // Choose task queue type based on processing mode
-    if (fast_mode) {
-        if (verbose) {
-            std::cout << "\n=== FAST MODE TASK PROCESSING ===" << std::endl;
-            std::cout << "Using fast task queue (no degree budget tracking)..." << std::endl;
+    if (verbose) {
+        std::cout << "\n=== STANDARD MODE TASK PROCESSING ===" << std::endl;
+        std::cout << "Using degree-aware task queue with budget tracking..." << std::endl;
+    }
+    
+    // Use degree-aware task queue
+    GraphTaskQueueWithDegrees task_queue;
+
+    // Initialize degree manager
+    task_queue.initialize_degree_manager(temp_dir + "/degree_deficits.json");
+
+    // Get the reference to the degree manager
+    auto degree_manager = task_queue.get_degree_manager();
+
+    // Set degree-aware task functions
+    task_queue.set_task_functions(
+        [](GraphTaskWithDegrees& task) {
+            enforce_min_degree_with_budget(task);
+        },
+        [](GraphTaskWithDegrees& task) {
+            enforce_connectivity_with_budget(task);
+        },
+        [](GraphTaskWithDegrees& task) {
+            enforce_mincut_with_budget(task);
         }
-        
-        // Use original task queue
-        GraphTaskQueue task_queue;
+    );
 
-        task_queue.set_task_functions(
-            [](Graph& g, uint32_t min_degree) {
-                enforce_min_degree(g, min_degree);
-            },
-            [](Graph& g, uint32_t min_degree) {
-                enforce_connectivity(g, min_degree);
-            },
-            [](Graph& g, uint32_t min_degree) {
-                enforce_mincut(g, min_degree);
-            }
-        );
+    task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader);
+    
+    if (verbose) {
+        std::cout << "Initialized degree-aware task queue with " << task_queue.queue_size() << " tasks." << std::endl;
+    }
 
-        task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader);
-        
-        if (verbose) {
-            std::cout << "Initialized fast task queue with " << task_queue.queue_size() << " tasks." << std::endl;
-        }
+    // Print initial degree budget statistics
+    auto initial_stats = task_queue.get_degree_manager()->get_stats();
+    if (verbose) {
+        std::cout << "\n=== INITIAL DEGREE BUDGET STATISTICS ===" << std::endl;
+        std::cout << "Available nodes: " << initial_stats.total_available_nodes << std::endl;
+        std::cout << "Total degree budget: " << initial_stats.total_available_degrees << std::endl;
+        std::cout << "Average budget per node: " << std::fixed << std::setprecision(2) 
+                    << initial_stats.avg_available_degree << std::endl;
+    }
 
-        task_queue.process_all_tasks();
+    task_queue.process_all_tasks();
 
-        auto completed_subgraphs = task_queue.get_completed_subgraphs();
-        if (verbose) {
-            std::cout << "Processed " << completed_subgraphs.size() << " subgraphs in fast mode." << std::endl;
-        }
-
-        // Continue with edge extraction and final processing...
-        auto newly_added_edges_raw = EdgeExtractor::find_newly_added_edges(
-            clustered_sbm_graph, completed_subgraphs);
-
-        std::vector<std::pair<uint32_t, uint32_t>> newly_added_edges = 
-            EdgeExtractor::get_compressed_newly_added_edges(
-                clustered_sbm_graph, newly_added_edges_raw, verbose);
-
-        add_edges_batch(clustered_sbm_graph, newly_added_edges);
-
-        if (!use_v2) {
-            if (verbose) {
-                std::cout << "\nPerforming simple degree sequence matching (V1)..." << std::endl;
-            }
-            match_degree_sequence(clustered_sbm_graph, reference_degree_sequence);
-        }
-        
-    } else {
-        if (verbose) {
-            std::cout << "\n=== STANDARD MODE TASK PROCESSING ===" << std::endl;
-            std::cout << "Using degree-aware task queue with budget tracking..." << std::endl;
-        }
-        
-        // Use degree-aware task queue
-        GraphTaskQueueWithDegrees task_queue;
-
-        // Initialize degree manager
-        task_queue.initialize_degree_manager(temp_dir + "/degree_deficits.json");
-
-        // Get the reference to the degree manager
-        auto degree_manager = task_queue.get_degree_manager();
-
-        // Set degree-aware task functions
-        task_queue.set_task_functions(
-            [](GraphTaskWithDegrees& task) {
-                enforce_min_degree_with_budget(task);
-            },
-            [](GraphTaskWithDegrees& task) {
-                enforce_connectivity_with_budget(task);
-            },
-            [](GraphTaskWithDegrees& task) {
-                enforce_mincut_with_budget(task);
-            }
-        );
-
-        task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader);
-        
-        if (verbose) {
-            std::cout << "Initialized degree-aware task queue with " << task_queue.queue_size() << " tasks." << std::endl;
-        }
-
-        // Print initial degree budget statistics
-        auto initial_stats = task_queue.get_degree_manager()->get_stats();
-        if (verbose) {
-            std::cout << "\n=== INITIAL DEGREE BUDGET STATISTICS ===" << std::endl;
-            std::cout << "Available nodes: " << initial_stats.total_available_nodes << std::endl;
-            std::cout << "Total degree budget: " << initial_stats.total_available_degrees << std::endl;
-            std::cout << "Average budget per node: " << std::fixed << std::setprecision(2) 
-                      << initial_stats.avg_available_degree << std::endl;
-        }
-
-        task_queue.process_all_tasks();
-
-        // Print final degree budget statistics
-        auto final_stats = task_queue.get_degree_manager()->get_stats();
-        if (verbose) {
-            std::cout << "\n=== FINAL DEGREE BUDGET STATISTICS ===" << std::endl;
-            std::cout << "Remaining available nodes: " << final_stats.total_available_nodes << std::endl;
-            std::cout << "Remaining degree budget: " << final_stats.total_available_degrees << std::endl;
-            if (initial_stats.total_available_degrees > 0) {
-                double utilization = 100.0 * (initial_stats.total_available_degrees - final_stats.total_available_degrees) / 
-                                    initial_stats.total_available_degrees;
-                std::cout << "Budget utilization: " << std::fixed << std::setprecision(1) 
-                          << utilization << "%" << std::endl;
-            }
-        }
-
-        auto completed_subgraphs = task_queue.get_completed_subgraphs();
-        if (verbose) {
-            std::cout << "Processed " << completed_subgraphs.size() << " subgraphs in standard mode." << std::endl;
-        }
-
-        // Continue with edge extraction and final processing...
-        auto newly_added_edges_raw = EdgeExtractor::find_newly_added_edges(
-            clustered_sbm_graph, completed_subgraphs);
-
-        std::vector<std::pair<uint32_t, uint32_t>> newly_added_edges = 
-            EdgeExtractor::get_compressed_newly_added_edges(
-                clustered_sbm_graph, newly_added_edges_raw, verbose);
-
-        add_edges_batch(clustered_sbm_graph, newly_added_edges);
-
-        if (!use_v2) {
-            if (verbose) {
-                std::cout << "\nPerforming simple degree sequence matching (V1)..." << std::endl;
-            }
-            match_degree_sequence_with_budget(
-                clustered_sbm_graph, degree_manager);
+    // Print final degree budget statistics
+    auto final_stats = task_queue.get_degree_manager()->get_stats();
+    if (verbose) {
+        std::cout << "\n=== FINAL DEGREE BUDGET STATISTICS ===" << std::endl;
+        std::cout << "Remaining available nodes: " << final_stats.total_available_nodes << std::endl;
+        std::cout << "Remaining degree budget: " << final_stats.total_available_degrees << std::endl;
+        if (initial_stats.total_available_degrees > 0) {
+            double utilization = 100.0 * (initial_stats.total_available_degrees - final_stats.total_available_degrees) / 
+                                initial_stats.total_available_degrees;
+            std::cout << "Budget utilization: " << std::fixed << std::setprecision(1) 
+                        << utilization << "%" << std::endl;
         }
     }
 
-    // Degree sequence matching (common for both paths)
-    if (use_v2) {
+    auto completed_subgraphs = task_queue.get_completed_subgraphs();
+    if (verbose) {
+        std::cout << "Processed " << completed_subgraphs.size() << " subgraphs in standard mode." << std::endl;
+    }
+
+    // Continue with edge extraction and final processing...
+    auto newly_added_edges_raw = EdgeExtractor::find_newly_added_edges(
+        clustered_sbm_graph, completed_subgraphs);
+
+    std::vector<std::pair<uint32_t, uint32_t>> newly_added_edges = 
+        EdgeExtractor::get_compressed_newly_added_edges(
+            clustered_sbm_graph, newly_added_edges_raw, verbose);
+
+    add_edges_batch(clustered_sbm_graph, newly_added_edges);
+
+    // Modified clustered subgraph filename
+    std::string temp_clustered_path = temp_dir + "/temp_clustered_modified.tsv";
+    
+    if (!use_v2) {
+        if (verbose) {
+            std::cout << "\nPerforming simple degree sequence matching (V1)..." << std::endl;
+        }
+        match_degree_sequence_v1(
+            clustered_sbm_graph,
+            temp_dir + "/non_singleton_edges.tsv", 
+            temp_dir + "/non_singleton_clusters.tsv", 
+            temp_dir + "/v1_output/",
+            temp_clustered_path);
+    } else {
         if (verbose) {
             std::cout << "\nPerforming SBM-based degree sequence matching (V2)..." << std::endl;
         }
-        match_degree_sequence_v2(clustered_sbm_graph, temp_dir + "/non_singleton_edges.tsv", 
-                                 temp_dir + "/non_singleton_clusters.tsv", temp_dir + "/sbm_output/");
+        match_degree_sequence_v2(
+            clustered_sbm_graph,
+            temp_dir + "/non_singleton_edges.tsv", 
+            temp_dir + "/non_singleton_clusters.tsv",
+            temp_dir + "/sbm_output/",
+            temp_clustered_path);
     }
-
-    // Write final output
-    std::string temp_clustered_path = "temp_clustered_modified.tsv";
-    if (verbose) {
-        std::cout << "Writing modified clustered SBM graph to temporary file: " << temp_clustered_path << std::endl;
-    }
-    save_graph_edgelist(temp_clustered_path, clustered_sbm_graph, verbose);
 
     if (verbose) {
         std::cout << "Concatenating modified clustered and unclustered SBM graphs to: " << output_file << std::endl;
@@ -573,14 +478,11 @@ int main(int argc, char** argv) {
     unclustered_in.close();
     
     output_stream.close();
-    
-    fs::remove(temp_clustered_path);
 
     if (verbose) {
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
         std::cout << "\n=== PROCESSING COMPLETE ===" << std::endl;
-        std::cout << "Mode: " << (fast_mode ? "Fast" : "Standard") << std::endl;
         std::cout << "Total execution time: " << duration << " seconds" << std::endl;
         std::cout << "Output written to: " << output_file << std::endl;
     }

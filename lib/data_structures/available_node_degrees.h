@@ -14,6 +14,13 @@
 
 using json = nlohmann::json;
 
+// TaskType enum for original reccs workflow (3 separate stages)
+enum class TaskType {
+    MIN_DEG_ENFORCE = 0,
+    CC_STITCHING = 1,
+    WCC_STITCHING = 2
+};
+
 /**
  * Thread-safe atomic degree manager - shared across all threads
  * Uses atomic operations for degree consumption to prevent race conditions
