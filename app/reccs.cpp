@@ -12,7 +12,6 @@
 #include "../lib/io/g_io.h"
 #include "../lib/io/cluster_io.h"
 #include "../lib/io/requirements_io.h"
-#include "../lib/io/degseq_io.h"
 #include "../lib/utils/orchestrator.h"
 #include "../lib/utils/edge_extractor.h"
 #include "../lib/utils/statics.h"
@@ -35,13 +34,15 @@ void print_usage(const char* program_name) {
     std::cerr << "      In checkpoint mode, --checkpoint must be the first argument." << std::endl;
     std::cerr << std::endl;
     std::cerr << "Common options:" << std::endl;
-    std::cerr << "  -c <clusters.tsv> Load clusters from TSV file (required)" << std::endl;
-    std::cerr << "  -e <empirical.tsv> Load empirical graph for degree budget tracking (standard mode)" << std::endl;
-    std::cerr << "  -t <num_threads>  Number of threads to use (default: hardware concurrency)" << std::endl;
-    std::cerr << "  -v                Verbose mode: print detailed progress information" << std::endl;
-    std::cerr << "  -o <output_file>  Output file (default: 'output.tsv')" << std::endl;
-    std::cerr << "  -h, --help        Show this help message and exit" << std::endl;
-    std::cerr << "  --v2              Use V2 degree sequence fitting with SBM." << std::endl;
+    std::cerr << "  -c <clusters.tsv>   Load clusters from TSV file (required)" << std::endl;
+    std::cerr << "  -e <empirical.tsv>  Load empirical graph for degree budget tracking (standard mode)" << std::endl;
+    std::cerr << "  -t <num_threads>    Number of threads to use (default: hardware concurrency)" << std::endl;
+    std::cerr << "  -v                  Verbose mode: print detailed progress information" << std::endl;
+    std::cerr << "  -o <output_file>    Output file (default: 'output.tsv')" << std::endl;
+    std::cerr << "  -h, --help          Show this help message and exit" << std::endl;
+    std::cerr << "  --v2                Use V2 degree sequence fitting with SBM." << std::endl;
+    std::cerr << "  --cleanup           Clean up temporary files after execution" << std::endl;
+    std::cerr << "  --tempname <name>   Use a custom temporary directory name (default: 'temp{timestamp}')" << std::endl;
     std::cerr << std::endl;
     std::cerr << "Normal mode specific options:" << std::endl;
     std::cerr << "  <edgelist.tsv>                   Input graph edgelist file (used as empirical graph)" << std::endl;
@@ -51,7 +52,6 @@ void print_usage(const char* program_name) {
     std::cerr << "  --clustered-sbm <path>          Path to clustered SBM graph file" << std::endl;
     std::cerr << "  --unclustered-sbm <path>        Path to unclustered SBM graph file" << std::endl;
     std::cerr << "  --requirements <path>           Path to requirements CSV file" << std::endl;
-    std::cerr << "  --degseq <path>                 Path to degree sequence JSON file" << std::endl;
     std::cerr << std::endl;
     std::cerr << "Examples:" << std::endl;
     std::cerr << "    " << program_name << " graph.tsv -c clusters.tsv -t 8 -v -o output.tsv" << std::endl;
@@ -59,7 +59,7 @@ void print_usage(const char* program_name) {
     std::cerr << "  Checkpoint mode with separate empirical graph:" << std::endl;
     std::cerr << "    " << program_name << " --checkpoint -c clusters.tsv -e empirical.tsv \\" << std::endl;
     std::cerr << "      --clustered-sbm clustered.tsv --unclustered-sbm unclustered.tsv \\" << std::endl;
-    std::cerr << "      --requirements requirements.csv --degseq degseq.json -v -o output.tsv" << std::endl;
+    std::cerr << "      --requirements requirements.csv -v -o output.tsv" << std::endl;
     std::cerr << std::endl;
 }
 
@@ -67,13 +67,11 @@ struct CheckpointArgs {
     std::string clustered_sbm_path;
     std::string unclustered_sbm_path;
     std::string requirements_path;
-    std::string degseq_path;
     
     bool are_all_provided() const {
         return !clustered_sbm_path.empty() && 
                !unclustered_sbm_path.empty() && 
-               !requirements_path.empty() && 
-               !degseq_path.empty();
+               !requirements_path.empty();
     }
     
     std::vector<std::string> get_missing_args() const {
@@ -81,23 +79,20 @@ struct CheckpointArgs {
         if (clustered_sbm_path.empty()) missing.push_back("--clustered-sbm");
         if (unclustered_sbm_path.empty()) missing.push_back("--unclustered-sbm");
         if (requirements_path.empty()) missing.push_back("--requirements");
-        if (degseq_path.empty()) missing.push_back("--degseq");
         return missing;
     }
     
     bool files_exist() const {
         return fs::exists(clustered_sbm_path) && 
                fs::exists(unclustered_sbm_path) && 
-               fs::exists(requirements_path) && 
-               fs::exists(degseq_path);
+               fs::exists(requirements_path);
     }
-    
+
     std::vector<std::string> get_missing_files() const {
         std::vector<std::string> missing;
         if (!fs::exists(clustered_sbm_path)) missing.push_back(clustered_sbm_path);
         if (!fs::exists(unclustered_sbm_path)) missing.push_back(unclustered_sbm_path);
         if (!fs::exists(requirements_path)) missing.push_back(requirements_path);
-        if (!fs::exists(degseq_path)) missing.push_back(degseq_path);
         return missing;
     }
 };
@@ -119,13 +114,16 @@ int main(int argc, char** argv) {
     
     // Parse command line arguments
     std::string graph_filename;
-    std::string empirical_graph_filename; // New: separate empirical graph
+    std::string empirical_graph_filename; // Separate empirical graph
     std::string cluster_filename;
     std::string output_file = "output.tsv";
+    std::string temp_dir;
     int num_threads = std::thread::hardware_concurrency();
     bool verbose = false;
     bool checkpoint_mode = false;
     bool use_v2 = false;
+    bool cleanup = false; // Cleanup temporary files after execution
+    bool tempname_provided = false;
     CheckpointArgs checkpoint_args;
     
     // Check if first argument is --checkpoint
@@ -153,11 +151,14 @@ int main(int argc, char** argv) {
                 checkpoint_args.unclustered_sbm_path = argv[++i];
             } else if (arg == "--requirements" && i + 1 < argc) {
                 checkpoint_args.requirements_path = argv[++i];
-            } else if (arg == "--degseq" && i + 1 < argc) {
-                checkpoint_args.degseq_path = argv[++i];
             } else if (arg == "-h" || arg == "--help") {
                 print_usage(argv[0]);
                 return 0;
+            } else if (arg == "--cleanup") {
+                cleanup = true;
+            } else if (arg == "--tempname" && i + 1 < argc) {
+                tempname_provided = true;
+                temp_dir = argv[++i];
             } else {
                 std::cerr << "Unknown checkpoint option: " << arg << std::endl;
                 print_usage(argv[0]);
@@ -229,6 +230,11 @@ int main(int argc, char** argv) {
             } else if (arg == "-h" || arg == "--help") {
                 print_usage(argv[0]);
                 return 0;
+            } else if (arg == "--cleanup") {
+                cleanup = true;
+            } else if (arg == "--tempname" && i + 1 < argc) {
+                tempname_provided = true;
+                temp_dir = argv[++i];
             } else {
                 std::cerr << "Unknown option: " << arg << std::endl;
                 print_usage(argv[0]);
@@ -257,9 +263,14 @@ int main(int argc, char** argv) {
     std::string clustered_sbm_graph_path;
     std::string unclustered_sbm_graph_path;
     std::string requirements_filename;
-    std::string degseq_filename;
-    std::string temp_dir;
-    
+
+    if (verbose) {
+        std::cout << "Creating temporary directory for intermediate files..." << std::endl;
+    }
+    if (!tempname_provided) {
+        temp_dir = "temp" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+    }
+
     if (checkpoint_mode) {
         if (verbose) {
             std::cout << "Running in checkpoint mode - skipping orchestrator..." << std::endl;
@@ -268,21 +279,11 @@ int main(int argc, char** argv) {
         clustered_sbm_graph_path = checkpoint_args.clustered_sbm_path;
         unclustered_sbm_graph_path = checkpoint_args.unclustered_sbm_path;
         requirements_filename = checkpoint_args.requirements_path;
-        degseq_filename = checkpoint_args.degseq_path;
-        
-        if (use_v2) {
-            temp_dir = "temp_v2_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
-        }
     } else {
         // Normal mode - run orchestrator
         if (verbose) {
             std::cout << "Running orchestrator..." << std::endl;
         }
-        
-        if (verbose) {
-            std::cout << "Creating temporary directory for intermediate files..." << std::endl;
-        }
-        temp_dir = "temp" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
 
         if (fs::exists(temp_dir)) {
             fs::remove_all(temp_dir);
@@ -301,7 +302,6 @@ int main(int argc, char** argv) {
         clustered_sbm_graph_path = temp_dir + "/clustered_sbm/syn_sbm.tsv";
         unclustered_sbm_graph_path = temp_dir + "/unclustered_sbm/syn_sbm.tsv";
         requirements_filename = temp_dir + "/clustered_stats.csv";
-        degseq_filename = temp_dir + "/reference_degree_sequence.json";
     }
     
     // Load the clustered SBM graph
@@ -339,27 +339,6 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::shared_ptr<const std::vector<uint32_t>> reference_degree_sequence;
-    
-    if (verbose) {
-        std::cout << "Loading reference degree sequence from: " << degseq_filename << std::endl;
-    }
-    
-    json degseq_json = load_degseq_json(degseq_filename);
-    if (degseq_json.empty()) {
-        std::cerr << "Error: Failed to load reference degree sequence from " << degseq_filename << std::endl;
-        return 1;
-    }
-    
-    auto sequence = std::make_shared<const std::vector<uint32_t>>(
-        degseq_json.get<std::vector<uint32_t>>());
-    reference_degree_sequence = sequence;
-    
-    if (verbose) {
-        std::cout << "Successfully loaded reference degree sequence with " 
-                  << reference_degree_sequence->size() << " degrees." << std::endl;
-    }
-
     if (verbose) {
         requirements_loader.print_statistics();
     }
@@ -374,9 +353,6 @@ int main(int argc, char** argv) {
 
     // Initialize degree manager
     task_queue.initialize_degree_manager(temp_dir + "/degree_deficits.json");
-
-    // Get the reference to the degree manager
-    auto degree_manager = task_queue.get_degree_manager();
 
     // Set degree-aware task functions
     task_queue.set_task_functions(
@@ -485,6 +461,13 @@ int main(int argc, char** argv) {
         std::cout << "\n=== PROCESSING COMPLETE ===" << std::endl;
         std::cout << "Total execution time: " << duration << " seconds" << std::endl;
         std::cout << "Output written to: " << output_file << std::endl;
+    }
+
+    if (cleanup) {
+        if (verbose) {
+            std::cout << "Cleaning up temporary files..." << std::endl;
+        }
+        fs::remove_all(temp_dir);
     }
     
     return 0;

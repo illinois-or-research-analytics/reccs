@@ -341,15 +341,9 @@ private:
         sbm_unclustered_command += " -c " + unclustered_clusters_;
         sbm_unclustered_command += " -o " + temp_dir_ + "/unclustered_sbm";
 
-        // Add degree sequence computation command
-        std::string degseq_command = "python3 extlib/compute_degseq.py";
-        degseq_command += " " + clustered_edges_;
-        degseq_command += " " + temp_dir_ + "/reference_degree_sequence.json";
-
         if (verbose_) {
             sbm_clustered_command += " -v";
             sbm_unclustered_command += " -v";
-            // Note: compute_degseq.py doesn't have a verbose flag
         }
         
         // Execute all three commands in parallel
@@ -364,19 +358,12 @@ private:
             std::cerr << "Error: Failed to fork for unclustered SBM process" << std::endl;
             return false;
         }
-
-        pid_t degseq_pid = executeCommand(degseq_command, "DegreeSequence");
-        if (degseq_pid < 0) {
-            std::cerr << "Error: Failed to fork for degree sequence computation process" << std::endl;
-            return false;
-        }
         
         // Store PIDs with descriptions
         pids_.push_back({clustered_sbm_pid, "SBM-Clustered"});
         pids_.push_back({unclustered_sbm_pid, "SBM-Unclustered"});
-        pids_.push_back({degseq_pid, "DegreeSequence"});
         
-        return waitForStageProcesses({"SBM-Clustered", "SBM-Unclustered", "DegreeSequence"});
+        return waitForStageProcesses({"SBM-Clustered", "SBM-Unclustered"});
     }
 
     /**
@@ -500,13 +487,6 @@ private:
             return false;
         }
         
-        // if (std::filesystem::file_size(filepath) == 0) {
-        //     if (verbose_) {
-        //         std::cerr << "File is empty: " << filepath << std::endl;
-        //     }
-        //     return false;
-        // }
-        
         return true;
     }
 
@@ -570,7 +550,6 @@ private:
             temp_dir_ + "/clustered_stats.csv",
             temp_dir_ + "/clustered_sbm/syn_sbm.tsv",
             temp_dir_ + "/unclustered_sbm/syn_sbm.tsv",
-            temp_dir_ + "/reference_degree_sequence.json",
             temp_dir_ + "/degree_deficits.json"
         };
         
