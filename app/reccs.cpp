@@ -327,6 +327,8 @@ int main(int argc, char** argv) {
         std::cerr << "Error: Clustered SBM graph file not found at: " << clustered_sbm_graph_path << std::endl;
         return 1;
     }
+
+    omp_set_num_threads(1); // Reset to single thread for loading  
     
     Graph clustered_sbm_graph = load_undirected_tsv_edgelist_parallel(
         clustered_sbm_graph_path, 1, verbose);

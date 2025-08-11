@@ -36,6 +36,19 @@ private:
     std::function<void(GraphTaskWithDegrees&)> min_deg_enforce_fn;
     std::function<void(GraphTaskWithDegrees&)> cc_stitching_fn;
     std::function<void(GraphTaskWithDegrees&)> wcc_stitching_fn;
+
+    // Map subgraph pointer to its mutex
+    std::unordered_map<Graph*, std::unique_ptr<std::mutex>> subgraph_mutexes;
+    std::mutex mutex_map_mutex;  // Protects the mutex map itself
+    
+    std::mutex& get_subgraph_mutex(Graph* subgraph) {
+        std::lock_guard<std::mutex> lock(mutex_map_mutex);
+        auto& mutex_ptr = subgraph_mutexes[subgraph];
+        if (!mutex_ptr) {
+            mutex_ptr = std::make_unique<std::mutex>();
+        }
+        return *mutex_ptr;
+    }
     
     // Extract subgraph for a cluster (unchanged)
     std::shared_ptr<Graph> extract_subgraph(const Graph& original, 
@@ -238,52 +251,38 @@ public:
     bool process_next_task() {
         GraphTaskWithDegrees task(nullptr, TaskType::MIN_DEG_ENFORCE, "", 0, 0, nullptr, {});
 
-        if (!try_get_task(task)) {
-            return false;
-        }
+        if (!try_get_task(task)) return false;
 
         int thread_id = omp_get_thread_num();
         
-        // Print current atomic degree manager stats
-        auto stats = degree_manager->get_stats();
-        std::cout << "[Thread " << thread_id << "] Processing " 
-                  << get_task_name(task.task_type) << " for cluster " << task.cluster_id 
-                  << " (Available nodes: " << stats.total_available_nodes 
-                  << ", Remaining budget: " << stats.total_available_degrees << ")" << std::endl;
+        // Lock this specific subgraph for the entire pipeline
+        std::lock_guard<std::mutex> subgraph_lock(get_subgraph_mutex(task.subgraph.get()));
         
-        switch (task.task_type) {
-            case TaskType::MIN_DEG_ENFORCE:
-                if (min_deg_enforce_fn) {
-                    min_deg_enforce_fn(task);
-                }
-                task.task_type = TaskType::CC_STITCHING;
-                add_task(task);
-                break;
-                
-            case TaskType::CC_STITCHING:
-                if (cc_stitching_fn) {
-                    cc_stitching_fn(task);
-                }
-                task.task_type = TaskType::WCC_STITCHING;
-                add_task(task);
-                break;
-                
-            case TaskType::WCC_STITCHING:
-                if (wcc_stitching_fn) {
-                    wcc_stitching_fn(task);
-                }
-                
-                {
-                    std::lock_guard<std::mutex> lock(completed_subgraphs_mutex);
-                    completed_subgraphs.push_back(task.subgraph);
-                }
+        std::cout << "Thread " << thread_id << " processing complete pipeline for cluster " 
+                  << task.cluster_id << std::endl;
 
-                std::cout << "Completed all tasks for cluster " << task.cluster_id << std::endl;
-                break;
+        // Process entire pipeline atomically with subgraph locked
+        if (min_deg_enforce_fn) {
+            min_deg_enforce_fn(task);
         }
         
+        if (cc_stitching_fn) {
+            cc_stitching_fn(task);
+        }
+        
+        if (wcc_stitching_fn) {
+            wcc_stitching_fn(task);
+        }
+        
+        // Store completed subgraph (still under lock)
+        {
+            std::lock_guard<std::mutex> lock(completed_subgraphs_mutex);
+            completed_subgraphs.push_back(task.subgraph);
+        }
+
         tasks_processed++;
         return true;
+        // subgraph_lock releases here
     }
     
     void process_all_tasks() {

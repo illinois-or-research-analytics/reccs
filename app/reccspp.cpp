@@ -279,10 +279,14 @@ int main(int argc, char** argv) {
         std::cerr << "Error: Clustered SBM graph file not found at: " << clustered_sbm_graph_path << std::endl;
         return 1;
     }
+
+    omp_set_num_threads(1);
     
     // Load the clustered SBM graph with node mapping
     Graph clustered_sbm_graph = load_undirected_tsv_edgelist_parallel(
-        clustered_sbm_graph_path, num_threads, verbose);
+        clustered_sbm_graph_path, 1, verbose);
+
+    omp_set_num_threads(num_threads);
 
     if (verbose) {
         std::cout << "Successfully loaded clustered SBM graph." << std::endl;
