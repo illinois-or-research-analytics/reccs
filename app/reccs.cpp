@@ -35,7 +35,6 @@ void print_usage(const char* program_name) {
     std::cerr << std::endl;
     std::cerr << "Common options:" << std::endl;
     std::cerr << "  -c <clusters.tsv>   Load clusters from TSV file (required)" << std::endl;
-    std::cerr << "  -e <empirical.tsv>  Load empirical graph for degree budget tracking (standard mode)" << std::endl;
     std::cerr << "  -t <num_threads>    Number of threads to use (default: hardware concurrency)" << std::endl;
     std::cerr << "  -v                  Verbose mode: print detailed progress information" << std::endl;
     std::cerr << "  -o <output_file>    Output file (default: 'output.tsv')" << std::endl;
@@ -48,10 +47,12 @@ void print_usage(const char* program_name) {
     std::cerr << "  <edgelist.tsv>                   Input graph edgelist file (used as empirical graph)" << std::endl;
     std::cerr << std::endl;
     std::cerr << "Checkpoint mode specific options:" << std::endl;
-    std::cerr << "  --checkpoint                     Enable checkpoint mode (skip orchestrator)" << std::endl;
+    std::cerr << "  --checkpoint                    Enable checkpoint mode (skip orchestrator)" << std::endl;
+    std::cerr << "  --clustered-subgraph <path>     Path to the empirical clustered subgraph file" << std::endl;
     std::cerr << "  --clustered-sbm <path>          Path to clustered SBM graph file" << std::endl;
     std::cerr << "  --unclustered-sbm <path>        Path to unclustered SBM graph file" << std::endl;
     std::cerr << "  --requirements <path>           Path to requirements CSV file" << std::endl;
+    std::cerr << "  --deficits <path>               Path to degree deficits JSON file (default: 'degree_deficits.json')" << std::endl;
     std::cerr << std::endl;
     std::cerr << "Examples:" << std::endl;
     std::cerr << "    " << program_name << " graph.tsv -c clusters.tsv -t 8 -v -o output.tsv" << std::endl;
@@ -59,40 +60,49 @@ void print_usage(const char* program_name) {
     std::cerr << "  Checkpoint mode with separate empirical graph:" << std::endl;
     std::cerr << "    " << program_name << " --checkpoint -c clusters.tsv -e empirical.tsv \\" << std::endl;
     std::cerr << "      --clustered-sbm clustered.tsv --unclustered-sbm unclustered.tsv \\" << std::endl;
-    std::cerr << "      --requirements requirements.csv -v -o output.tsv" << std::endl;
+    std::cerr << "      --requirements requirements.csv --deficits degree_deficits.json -v -o output.tsv" << std::endl;
     std::cerr << std::endl;
 }
 
 struct CheckpointArgs {
+    std::string clustered_subgraph_path;
     std::string clustered_sbm_path;
     std::string unclustered_sbm_path;
     std::string requirements_path;
+    std::string deficits_path;
     
     bool are_all_provided() const {
-        return !clustered_sbm_path.empty() && 
+        return !clustered_subgraph_path.empty() &&
+               !clustered_sbm_path.empty() && 
                !unclustered_sbm_path.empty() && 
-               !requirements_path.empty();
+               !requirements_path.empty() &&
+               !deficits_path.empty();
     }
     
     std::vector<std::string> get_missing_args() const {
         std::vector<std::string> missing;
+        if (clustered_subgraph_path.empty()) missing.push_back("--clustered-subgraph");
         if (clustered_sbm_path.empty()) missing.push_back("--clustered-sbm");
         if (unclustered_sbm_path.empty()) missing.push_back("--unclustered-sbm");
         if (requirements_path.empty()) missing.push_back("--requirements");
+        if (deficits_path.empty()) missing.push_back("--deficits");
         return missing;
     }
     
     bool files_exist() const {
-        return fs::exists(clustered_sbm_path) && 
+        return fs::exists(clustered_subgraph_path) &&
+               fs::exists(clustered_sbm_path) && 
                fs::exists(unclustered_sbm_path) && 
                fs::exists(requirements_path);
     }
 
     std::vector<std::string> get_missing_files() const {
         std::vector<std::string> missing;
+        if (!fs::exists(clustered_subgraph_path)) missing.push_back(clustered_subgraph_path);
         if (!fs::exists(clustered_sbm_path)) missing.push_back(clustered_sbm_path);
         if (!fs::exists(unclustered_sbm_path)) missing.push_back(unclustered_sbm_path);
         if (!fs::exists(requirements_path)) missing.push_back(requirements_path);
+        if (!fs::exists(deficits_path)) missing.push_back(deficits_path);
         return missing;
     }
 };
@@ -145,12 +155,16 @@ int main(int argc, char** argv) {
                 cluster_filename = argv[++i];
             } else if (arg == "-e" && i + 1 < argc) {
                 empirical_graph_filename = argv[++i];
+            } else if (arg == "--clustered-subgraph" && i + 1 < argc) {
+                checkpoint_args.clustered_subgraph_path = argv[++i];
             } else if (arg == "--clustered-sbm" && i + 1 < argc) {
                 checkpoint_args.clustered_sbm_path = argv[++i];
             } else if (arg == "--unclustered-sbm" && i + 1 < argc) {
                 checkpoint_args.unclustered_sbm_path = argv[++i];
             } else if (arg == "--requirements" && i + 1 < argc) {
                 checkpoint_args.requirements_path = argv[++i];
+            } else if (arg == "--deficits" && i + 1 < argc) {
+                checkpoint_args.deficits_path = argv[++i];
             } else if (arg == "-h" || arg == "--help") {
                 print_usage(argv[0]);
                 return 0;
@@ -315,7 +329,9 @@ int main(int argc, char** argv) {
     }
     
     Graph clustered_sbm_graph = load_undirected_tsv_edgelist_parallel(
-        clustered_sbm_graph_path, num_threads, verbose);
+        clustered_sbm_graph_path, 1, verbose);
+
+    omp_set_num_threads(num_threads);
 
     if (verbose) {
         std::cout << "Successfully loaded clustered SBM graph." << std::endl;
@@ -352,7 +368,8 @@ int main(int argc, char** argv) {
     GraphTaskQueueWithDegrees task_queue;
 
     // Initialize degree manager
-    task_queue.initialize_degree_manager(temp_dir + "/degree_deficits.json");
+    std::string deficits_path = checkpoint_mode ? checkpoint_args.deficits_path : temp_dir + "/degree_deficits.json";
+    task_queue.initialize_degree_manager(deficits_path);
 
     // Set degree-aware task functions
     task_queue.set_task_functions(
@@ -417,14 +434,23 @@ int main(int argc, char** argv) {
     // Modified clustered subgraph filename
     std::string temp_clustered_path = temp_dir + "/temp_clustered_modified.tsv";
     
+    // Clustered subgraph path
+    std::string clustered_subgraph_path = temp_dir + "/non_singleton_edges.tsv";
+    std::string clustered_clusters_path = temp_dir + "/non_singleton_clusters.tsv";
+
+    if (checkpoint_mode) {
+        clustered_subgraph_path = checkpoint_args.clustered_subgraph_path;
+        clustered_clusters_path = cluster_filename;
+    }
+
     if (!use_v2) {
         if (verbose) {
             std::cout << "\nPerforming simple degree sequence matching (V1)..." << std::endl;
         }
         match_degree_sequence_v1(
             clustered_sbm_graph,
-            temp_dir + "/non_singleton_edges.tsv", 
-            temp_dir + "/non_singleton_clusters.tsv", 
+            clustered_subgraph_path,
+            clustered_clusters_path,
             temp_dir + "/v1_output/",
             temp_clustered_path);
     } else {
@@ -433,8 +459,8 @@ int main(int argc, char** argv) {
         }
         match_degree_sequence_v2(
             clustered_sbm_graph,
-            temp_dir + "/non_singleton_edges.tsv", 
-            temp_dir + "/non_singleton_clusters.tsv",
+            clustered_subgraph_path,
+            clustered_clusters_path, 
             temp_dir + "/sbm_output/",
             temp_clustered_path);
     }
