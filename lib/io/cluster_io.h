@@ -150,17 +150,22 @@ Clustering load_clustering(const std::string& filename, const Graph& graph,
     size_t nodes_processed = 0;
     size_t nodes_found = 0;
     size_t total_nodes = 0;
-    
+
+    // CRITICAL FIX: Track processed missing nodes to prevent duplicates
+    std::unordered_set<uint64_t> processed_missing_nodes;
+    size_t missing_nodes_added = 0;
+    size_t duplicate_missing_nodes = 0;
+
     for (const auto& [cluster_id, original_nodes] : all_cluster_nodes) {
         total_nodes += original_nodes.size();
     }
-    
+
     auto build_start_time = std::chrono::steady_clock::now();
-    
+
     if (verbose) {
         std::cout << "Step 2: Building clustering structure..." << std::endl;
     }
-    
+
     for (const auto& [cluster_id, original_nodes] : all_cluster_nodes) {
         for (uint64_t original_node_id : original_nodes) {
             auto it = graph.node_map.find(original_node_id);
@@ -169,11 +174,24 @@ Clustering load_clustering(const std::string& filename, const Graph& graph,
                 clustering.assign_node_to_cluster(node_id, cluster_id);
                 nodes_found++;
             } else {
-                if (verbose) {
-                    std::cerr << "Warning: Node " << original_node_id 
-                              << " not found in graph" << std::endl;
+                // Check if we've already processed this missing node
+                if (processed_missing_nodes.find(original_node_id) == processed_missing_nodes.end()) {
+                    if (verbose) {
+                        std::cerr << "Warning: Node " << original_node_id 
+                                << " not found in graph, adding to cluster " << cluster_id << std::endl;
+                    }
+                    clustering.assign_missing_node_to_cluster(original_node_id, cluster_id);
+                    processed_missing_nodes.insert(original_node_id);
+                    missing_nodes_added++;
+                } else {
+                    // This missing node already exists in another cluster
+                    duplicate_missing_nodes++;
+                    if (verbose) {
+                        std::cerr << "Warning: Missing node " << original_node_id 
+                                << " already assigned to another cluster, skipping duplicate in " 
+                                << cluster_id << std::endl;
+                    }
                 }
-                clustering.assign_missing_node_to_cluster(original_node_id, cluster_id);
             }
             
             nodes_processed++;
@@ -182,7 +200,7 @@ Clustering load_clustering(const std::string& filename, const Graph& graph,
             if (verbose && nodes_processed % 1000000 == 0) {
                 double progress = 100.0 * nodes_processed / total_nodes;
                 std::cout << "\rBuilding clustering: " << std::fixed << std::setprecision(1) 
-                          << progress << "%" << std::flush;
+                        << progress << "%" << std::flush;
             }
         }
     }
@@ -197,6 +215,30 @@ Clustering load_clustering(const std::string& filename, const Graph& graph,
         std::cout << "Loaded " << clustering.get_non_empty_cluster_count() << " non-empty clusters" << std::endl;
         std::cout << "Assigned " << clustering.get_clustered_node_count() 
                   << " out of " << graph.num_nodes << " nodes to clusters" << std::endl;
+
+        std::cout << "Missing nodes summary:" << std::endl;
+        std::cout << "  - Unique missing nodes added: " << missing_nodes_added << std::endl;
+        std::cout << "  - Duplicate missing node occurrences skipped: " << duplicate_missing_nodes << std::endl;
+        std::cout << "  - Total missing node occurrences in file: " << (missing_nodes_added + duplicate_missing_nodes) << std::endl;
+        
+        std::cout << "Expected missing nodes: " << (total_nodes - nodes_found) << std::endl;
+        std::cout << "Actual unique missing nodes: " << missing_nodes_added << std::endl;
+        
+        if (missing_nodes_added != (total_nodes - nodes_found)) {
+            std::cout << "WARNING: Missing node count mismatch! This indicates duplicate missing nodes in clustering file." << std::endl;
+        }
+
+        // Debug: if not all nodes were assigned, report missing nodes
+        if (clustering.get_clustered_node_count() < graph.num_nodes) {
+            std::cout << "Warning: Not all nodes were assigned to clusters!" << std::endl;
+            std::cout << "List of missing nodes:" << std::endl;
+            for (uint32_t node_id = 0; node_id < graph.num_nodes; ++node_id) {
+                if (clustering.node_to_cluster_idx[node_id] == UINT32_MAX) {
+                    std::cout << "Node " << graph.id_map[node_id] << "(" << node_id << ")"
+                              << " not assigned to any cluster" << std::endl;
+                }
+            }
+        }
         
         // Check for nodes not found in the graph
         std::cout << "Nodes found in graph: " << nodes_found 

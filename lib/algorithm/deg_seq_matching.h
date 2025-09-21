@@ -12,6 +12,9 @@
 #include "../data_structures/graph.h"
 #include "../data_structures/node_degree.h"
 
+/**
+ * Matches the degree sequence of a graph to a target degree sequence.
+ */
 void match_degree_sequence(
     Graph& g, 
     const std::shared_ptr<const std::vector<uint32_t>>& degree_sequence) {
@@ -29,131 +32,137 @@ void match_degree_sequence(
     // Track number of edges added
     uint32_t edges_added = 0;
 
-    // Get current degrees and sort both sequences
-    std::vector<uint32_t> current_degrees;
-    current_degrees.reserve(g.num_nodes);
-    for (uint32_t i = 0; i < g.num_nodes; ++i) {
-        current_degrees.push_back(g.get_degree(i));
-    }
-
-    // Ensure both sequences are sorted – this is to minimize the number of edges added
-    std::vector<uint32_t> sorted_target = *degree_sequence;
-    std::vector<uint32_t> sorted_current = current_degrees;
+    // Get current degrees and sort them to match with target sequence
+    std::vector<std::pair<uint32_t, uint32_t>> node_degrees; // (node_id, current_degree)
+    node_degrees.reserve(g.num_nodes);
     
-    std::sort(sorted_target.begin(), sorted_target.end());
-    std::sort(sorted_current.begin(), sorted_current.end());
-
-    // Create mapping from current degrees to nodes that have those degrees
-    std::unordered_map<uint32_t, std::vector<uint32_t>> degree_to_nodes;
     for (uint32_t i = 0; i < g.num_nodes; ++i) {
-        degree_to_nodes[g.get_degree(i)].push_back(i);
+        node_degrees.emplace_back(i, g.get_degree(i));
     }
-
-    // Compute deficits using sorted sequences and assign to actual nodes
+    
+    // Sort by current degree in non-increasing order (same as target sequence)
+    std::sort(node_degrees.begin(), node_degrees.end(), 
+              [](const auto& a, const auto& b) { return a.second > b.second; });
+    
+    // Compute deficits by matching sorted current degrees with target sequence
     std::unordered_map<uint32_t, uint32_t> available_node_degrees;
+    std::unordered_set<uint32_t> available_node_set;
     
     for (uint32_t i = 0; i < g.num_nodes; ++i) {
-        uint32_t current_sorted = sorted_current[i];
-        uint32_t target_sorted = sorted_target[i];
+        uint32_t node_id = node_degrees[i].first;
+        uint32_t current_degree = node_degrees[i].second;
+        uint32_t target_degree = (*degree_sequence)[i]; // Target sequence is already sorted
         
-        if (target_sorted > current_sorted) {
-            uint32_t deficit = target_sorted - current_sorted;
-            
-            // Find a node with the current_sorted degree that hasn't been assigned yet
-            auto& candidates = degree_to_nodes[current_sorted];
-            if (!candidates.empty()) {
-                uint32_t chosen_node = candidates.back();
-                candidates.pop_back();
-                available_node_degrees[chosen_node] = deficit;
-            }
+        if (target_degree > current_degree) {
+            uint32_t deficit = target_degree - current_degree;
+            available_node_degrees[node_id] = deficit;
+            available_node_set.insert(node_id);
         }
+    }
+
+    if (available_node_degrees.empty()) {
+        std::cout << "[Graph " << g.id << "]: No nodes need additional edges." << std::endl;
+        return;
     }
 
     // Random number generator setup
     std::random_device rd;
     std::mt19937 gen(rd());
 
-    // Use min heap to process smallest deficits first
+    // Use max heap to process largest deficits first (like Python version)
     auto heap_comparator = [](const NodeDegree& a, const NodeDegree& b) {
-        if (a.degree != b.degree) return a.degree > b.degree; // Min heap
+        if (a.degree != b.degree) return a.degree < b.degree; // Max heap
         return a.node > b.node;
     };
     
     std::priority_queue<NodeDegree, std::vector<NodeDegree>, decltype(heap_comparator)> 
-        min_heap(heap_comparator);
+        max_heap(heap_comparator);
 
     for (const auto& pair : available_node_degrees) {
-        min_heap.emplace(NodeDegree{pair.first, static_cast<int32_t>(pair.second)});
+        max_heap.emplace(NodeDegree{pair.first, static_cast<int32_t>(pair.second)});
     }
 
-    auto existing_edges = statics::compute_existing_edges(g);
-    auto edge_exists_fast = statics::create_edge_exists_checker(existing_edges);
+    uint32_t nodes_processed = 0;
 
-    // Main algorithm loop - corrected to match pseudocode exactly
-    while (!min_heap.empty()) {
-        NodeDegree current = min_heap.top();
-        min_heap.pop();
+    // Main algorithm loop - optimized version
+    std::cout << "[Graph " << g.id << "]: Starting degree sequence matching..." << std::endl;
+    while (!max_heap.empty() && !available_node_set.empty()) {
+        NodeDegree current = max_heap.top();
+        max_heap.pop();
         
         uint32_t available_node = current.node;
-        uint32_t avail_degree = static_cast<uint32_t>(current.degree);
-
-        // Check if available_node is still in available_node_degrees
-        if (available_node_degrees.find(available_node) == available_node_degrees.end()) {
+        
+        // Check if node is still available
+        if (available_node_set.find(available_node) == available_node_set.end()) {
             continue;
         }
+        
+        uint32_t avail_degree = available_node_degrees[available_node];
 
-        // Check if the degree is still current (heap might have stale entries)
-        if (available_node_degrees[available_node] != avail_degree) {
-            if (available_node_degrees[available_node] > 0) {
-                min_heap.emplace(NodeDegree{available_node, 
-                    static_cast<int32_t>(available_node_degrees[available_node])});
-            }
-            continue;
+        // Get current neighbors efficiently
+        std::unordered_set<uint32_t> neighbors;
+        for (uint32_t idx = g.row_ptr[available_node]; idx < g.row_ptr[available_node + 1]; ++idx) {
+            neighbors.insert(g.col_idx[idx]);
         }
+        neighbors.insert(available_node); // Add self to avoid self-loops
 
-        // Find available non-neighbors (only nodes that still need more degree)
+        // Build available non-neighbors from available_node_set
         std::vector<uint32_t> available_non_neighbors;
-        for (const auto& pair : available_node_degrees) {
-            uint32_t candidate = pair.first;
-            if (candidate != available_node && !edge_exists_fast(available_node, candidate)) {
+        available_non_neighbors.reserve(available_node_set.size());
+        
+        for (uint32_t candidate : available_node_set) {
+            if (neighbors.find(candidate) == neighbors.end()) {
                 available_non_neighbors.push_back(candidate);
             }
         }
 
         uint32_t avail_k = std::min(avail_degree, static_cast<uint32_t>(available_non_neighbors.size()));
         
-        // Make avail_k connections
+        // Make avail_k connections using efficient random selection
         for (uint32_t i = 0; i < avail_k; ++i) {
-            // Randomly select from remaining available non-neighbors
+            if (available_non_neighbors.empty()) break;
+            
+            // Use swap-and-pop for efficient random selection
             std::uniform_int_distribution<size_t> dist(0, available_non_neighbors.size() - 1);
             size_t random_index = dist(gen);
-            uint32_t random_node = available_non_neighbors[random_index];
             
-            // Remove the selected node from available_non_neighbors to avoid duplicate selection
-            available_non_neighbors.erase(available_non_neighbors.begin() + random_index);
+            uint32_t edge_end = available_non_neighbors[random_index];
+            
+            // Swap with last element and pop (efficient removal)
+            std::swap(available_non_neighbors[random_index], available_non_neighbors.back());
+            available_non_neighbors.pop_back();
             
             // Add the edge
-            g.add_edge(available_node, random_node);
-            existing_edges.insert(statics::encode_edge(available_node, random_node));
+            g.add_edge(available_node, edge_end);
             edges_added++;
 
-            // Update random_node's deficit
-            if (available_node_degrees[random_node] > 1) {
-                available_node_degrees[random_node]--;
+            // Update edge_end's deficit
+            available_node_degrees[edge_end]--;
+            if (available_node_degrees[edge_end] == 0) {
+                available_node_set.erase(edge_end);
+                available_node_degrees.erase(edge_end);
+            } 
+
+            // Add edge_end to heap if it still has a deficit
+            else {
                 // Add updated node back to heap
-                min_heap.emplace(NodeDegree{random_node, 
-                    static_cast<int32_t>(available_node_degrees[random_node])});
-            } else {
-                // random_node is satisfied, remove it
-                available_node_degrees.erase(random_node);
+                max_heap.emplace(NodeDegree{edge_end, 
+                    static_cast<int32_t>(available_node_degrees[edge_end])});
             }
         }
 
-        // available_node is now satisfied, remove it
+        // Remove processed node
+        available_node_set.erase(available_node);
         available_node_degrees.erase(available_node);
+        
+        nodes_processed++;
+        if (nodes_processed % 100 == 0) {
+            std::cout << "Nodes processed: " << nodes_processed 
+                      << ", Available nodes: " << available_node_set.size() << std::endl;
+        }
     }
 
     std::cout << "[Graph " << g.id << "]: Number of edges added: " << edges_added << std::endl;
 }
 
-#endif
+#endif // DEG_SEQ_MATCHING_H

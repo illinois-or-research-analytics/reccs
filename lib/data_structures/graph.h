@@ -13,12 +13,13 @@
 #include "mincut_result.h"
 
 // Viecut includes
-#include "io/graph_io.h"
-#include "algorithms/global_mincut/noi_minimum_cut.h"
+#include "algorithms/global_mincut/algorithms.h"
+#include "algorithms/global_mincut/minimum_cut.h"
 #include "common/configuration.h"
 #include "common/definitions.h"
 #include "data_structure/graph_access.h"
 #include "data_structure/mutable_graph.h"
+#include "io/graph_io.h"
 #include "tlx/cmdline_parser.hpp"
 #include "tlx/logger.hpp"
 #include "tools/random_functions.h"
@@ -79,10 +80,28 @@ struct Graph {
         num_edges++;
     }
 
+    // Add a node to the graph
+    uint32_t add_node(uint64_t original_id) {
+        uint32_t new_id = num_nodes;
+        node_map[original_id] = new_id;
+        id_map.push_back(original_id);
+        num_nodes++;
+        row_ptr.push_back(row_ptr.back()); // Initialize new row_ptr entry
+        return new_id;
+    }
+
     // Get degree of a node
     uint32_t get_degree(uint32_t node) const {
         if (node >= num_nodes) return 0;
         return row_ptr[node + 1] - row_ptr[node];
+    }
+
+    // Get neighbors of a node
+    std::vector<uint32_t> get_neighbors(uint32_t node) const {
+        if (node >= num_nodes) return {};
+        uint32_t start = row_ptr[node];
+        uint32_t end = row_ptr[node + 1];
+        return std::vector<uint32_t>(col_idx.begin() + start, col_idx.begin() + end);
     }
 };
 
@@ -291,9 +310,9 @@ static std::shared_ptr<mutable_graph> convert_to_viecut(const Graph& g) {
 MincutResult compute_mincut(const Graph& g) {
     // Set the algorithm and queue type
     auto cfg = configuration::getConfig();
-    cfg->algorithm = "noi";
+    cfg->algorithm = "cactus";
     cfg->queue_type = "bqueue";
-    cfg->find_most_balanced_cut = false;
+    cfg->find_most_balanced_cut = true;
     cfg->save_cut = true;
 
     std::vector<int> light;
@@ -311,8 +330,7 @@ MincutResult compute_mincut(const Graph& g) {
     NodeID n = G->number_of_nodes();
     EdgeID m = G->number_of_edges();
 
-    //std::string algorithm = "noi"; // Default algorithm, can be changed via configuration
-    auto mc = new noi_minimum_cut<GraphPtr>();
+    auto mc = selectMincutAlgorithm<GraphPtr>("cactus");
 
     t.restart();
     EdgeWeight cut;

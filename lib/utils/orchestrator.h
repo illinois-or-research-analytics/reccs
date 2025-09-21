@@ -63,11 +63,16 @@ public:
             auto stage1_duration = std::chrono::duration_cast<std::chrono::seconds>(
                 stage1_end_time - start_time).count();
             std::cout << "First stage completed in " << stage1_duration << " seconds" << std::endl;
-            std::cout << "Running SBM generation for both components..." << std::endl;
+            std::cout << "Running SBM generation and degree sequence computation..." << std::endl;
         }
         
-        // Step 2: Run SBM generation on both components
+        // Step 2: Run SBM generation on both components and degree sequence computation
         if (!runSecondStage()) {
+            return 1;
+        }
+
+        // Step 3: Compute per-node degree deficits
+        if (!runThirdStage()) {
             return 1;
         }
         
@@ -94,6 +99,7 @@ public:
             std::cout << "  - " << temp_dir_ << "/clustered_stats.csv" << std::endl;
             std::cout << "  - " << temp_dir_ << "/clustered_sbm/syn_sbm.tsv" << std::endl;
             std::cout << "  - " << temp_dir_ << "/unclustered_sbm/syn_sbm.tsv" << std::endl;
+            std::cout << "  - " << temp_dir_ << "/reference_degree_sequence.json" << std::endl;
         }
         
         return 0;
@@ -318,7 +324,7 @@ private:
     }
     
     /**
-     * @brief Run the second stage: SBM generation for both components
+     * @brief Run the second stage: SBM generation for both components and degree sequence computation
      * 
      * @return bool true if successful, false otherwise
      */
@@ -329,7 +335,7 @@ private:
         sbm_clustered_command += " -f " + clustered_edges_;
         sbm_clustered_command += " -c " + clustered_clusters_;
         sbm_clustered_command += " -o " + temp_dir_ + "/clustered_sbm";
-        
+
         std::string sbm_unclustered_command = "python3 " + sbm_script;
         sbm_unclustered_command += " -f " + unclustered_edges_;
         sbm_unclustered_command += " -c " + unclustered_clusters_;
@@ -340,7 +346,7 @@ private:
             sbm_unclustered_command += " -v";
         }
         
-        // Execute commands in parallel
+        // Execute all three commands in parallel
         pid_t clustered_sbm_pid = executeCommand(sbm_clustered_command, "SBM-Clustered");
         if (clustered_sbm_pid < 0) {
             std::cerr << "Error: Failed to fork for clustered SBM process" << std::endl;
@@ -357,6 +363,41 @@ private:
         pids_.push_back({clustered_sbm_pid, "SBM-Clustered"});
         pids_.push_back({unclustered_sbm_pid, "SBM-Unclustered"});
         
+        return waitForStageProcesses({"SBM-Clustered", "SBM-Unclustered"});
+    }
+
+    /**
+     * @brief Run the third stage: compute per-node degree deficits
+     *
+     * @return bool true if successful, false otherwise
+     */
+    bool runThirdStage() {
+        if (verbose_) {
+            std::cout << "Running deficit computation..." << std::endl;
+        }
+
+        // Verify clustered SBM output exists first
+        std::string clustered_sbm_output = temp_dir_ + "/clustered_sbm/syn_sbm.tsv";
+        if (!checkFileExistsAndNotEmpty(clustered_sbm_output)) {
+            std::cerr << "Error: Clustered SBM output not found: " << clustered_sbm_output << std::endl;
+            return false;
+        }
+
+        // Run deficit computation
+        std::string deficit_command = "python3 extlib/compute_deficits.py";
+        deficit_command += " " + clustered_edges_;  // reference edges
+        deficit_command += " " + clustered_sbm_output;  // synthetic edges
+        deficit_command += " " + temp_dir_ + "/degree_deficits.json";  // output
+        
+        pid_t deficit_pid = executeCommand(deficit_command, "DegreeDeficits");
+        if (deficit_pid < 0) {
+            std::cerr << "Error: Failed to fork for degree deficits computation" << std::endl;
+            return false;
+        }
+
+        // Store PID with description
+        pids_.push_back({deficit_pid, "DegreeDeficits"});
+
         return true;
     }
     
@@ -415,6 +456,13 @@ private:
                                   << output_file << std::endl;
                         all_success = false;
                     }
+                } else if (description == "DegreeSequence") {
+                    std::string output_file = temp_dir_ + "/reference_degree_sequence.json";
+                    if (!checkFileExistsAndNotEmpty(output_file)) {
+                        std::cerr << "Error: DegreeSequence process completed but did not generate output file: " 
+                                  << output_file << std::endl;
+                        all_success = false;
+                    }
                 }
             }
         }
@@ -439,14 +487,57 @@ private:
             return false;
         }
         
-        // if (std::filesystem::file_size(filepath) == 0) {
-        //     if (verbose_) {
-        //         std::cerr << "File is empty: " << filepath << std::endl;
-        //     }
-        //     return false;
-        // }
-        
         return true;
+    }
+
+    /**
+     * @brief Wait for specific processes to complete
+     * 
+     * @param stage_descriptions List of process descriptions to wait for
+     * @return bool true if all processes completed successfully
+     */
+    bool waitForStageProcesses(const std::vector<std::string>& stage_descriptions) {
+        if (verbose_) {
+            std::cout << "Waiting for stage processes to complete..." << std::endl;
+        }
+        
+        int status;
+        bool all_success = true;
+        
+        for (auto it = pids_.begin(); it != pids_.end();) {
+            if (std::find(stage_descriptions.begin(), stage_descriptions.end(), it->second) != stage_descriptions.end()) {
+                if (verbose_) {
+                    std::cout << "Waiting for process " << it->first << " (" << it->second << ")..." << std::endl;
+                }
+                
+                // Wait for the process to finish
+                waitpid(it->first, &status, 0);
+                
+                // Find and process any output pipes for this process
+                auto pipe_it = std::find_if(output_pipes_.begin(), output_pipes_.end(),
+                                        [pid = it->first](const auto& pipes) { return pipes.pid == pid; });
+                
+                if (pipe_it != output_pipes_.end()) {
+                    processCommandOutput(pipe_it->pid, pipe_it->description, pipe_it->stdout_fd, pipe_it->stderr_fd);
+                    output_pipes_.erase(pipe_it);
+                }
+                
+                if (WEXITSTATUS(status) != 0) {
+                    std::cerr << "Error: Process " << it->first << " (" << it->second << ") failed with status " 
+                            << WEXITSTATUS(status) << std::endl;
+                    all_success = false;
+                } else if (verbose_) {
+                    std::cout << "Process " << it->first << " (" << it->second << ") completed successfully" << std::endl;
+                }
+                
+                // Remove from pids_ list
+                it = pids_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        
+        return all_success;
     }
     
     /**
@@ -458,7 +549,8 @@ private:
         std::vector<std::string> required_files = {
             temp_dir_ + "/clustered_stats.csv",
             temp_dir_ + "/clustered_sbm/syn_sbm.tsv",
-            temp_dir_ + "/unclustered_sbm/syn_sbm.tsv"
+            temp_dir_ + "/unclustered_sbm/syn_sbm.tsv",
+            temp_dir_ + "/degree_deficits.json"
         };
         
         bool all_files_exist = true;

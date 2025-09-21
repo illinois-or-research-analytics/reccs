@@ -4,6 +4,9 @@ project(reccs)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Ensure std::filesystem is available
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_GLIBCXX_USE_CXX11_ABI=0")
+
 # Find OpenMP package
 find_package(OpenMP REQUIRED)
 
@@ -18,20 +21,28 @@ include_directories(
     extlib/VieCut/lib             
     extlib/VieCut/extlib/growt
     extlib/VieCut/extlib/tlx
+    extlib/pcg-cpp/include
 )
 
 # Add nlohmann/json
 add_subdirectory(extlib/json)
 
-# Add the executable
-add_executable(reccs app/reccs.cpp)
-
-# Link with OpenMP, nlohmann_json, and TLX
-target_link_libraries(reccs PUBLIC 
+# Create shared library components for common functionality
+# This helps avoid code duplication and ensures both executables use the same libraries
+set(RECCS_LIBRARIES
     OpenMP::OpenMP_CXX 
     nlohmann_json::nlohmann_json
     tlx  # Link against TLX library
+    # stdc++fs  # Add filesystem library
 )
+
+# Add the original reccs executable
+add_executable(reccs app/reccs.cpp)
+target_link_libraries(reccs PUBLIC ${RECCS_LIBRARIES})
+
+# Add the new reccspp executable
+add_executable(reccspp app/reccspp.cpp)
+target_link_libraries(reccspp PUBLIC ${RECCS_LIBRARIES})
 
 # Copy extlib directory to build directory
 file(COPY ${CMAKE_SOURCE_DIR}/extlib DESTINATION ${CMAKE_BINARY_DIR})

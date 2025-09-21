@@ -137,6 +137,51 @@ public:
         
         std::cout << "Wrote " << edges.size() << " edges to " << filename << std::endl;
     }
+
+    // Fetch the compressed ids of the newly added edges
+    static std::vector<std::pair<uint32_t, uint32_t>> get_compressed_newly_added_edges(
+        const Graph& original_graph,
+        const std::vector<std::pair<uint64_t, uint64_t>>& newly_added_edges_raw,
+        bool verbose = false) {
+        
+        // Convert original node IDs back to internal indices
+        std::vector<std::pair<uint32_t, uint32_t>> newly_added_edges;
+        newly_added_edges.reserve(newly_added_edges_raw.size());
+
+        for (const auto& edge : newly_added_edges_raw) {
+            // Convert from original IDs to internal indices, adding nodes if missing
+            auto it_u = original_graph.node_map.find(edge.first);
+            auto it_v = original_graph.node_map.find(edge.second);
+            
+            uint32_t internal_u, internal_v;
+            
+            // Handle node u
+            if (it_u != original_graph.node_map.end()) {
+                internal_u = it_u->second;
+            } else {
+                if (verbose) {
+                    std::cout << "Adding missing node " << edge.first << " to graph" << std::endl;
+                }
+                // Note: This assumes original_graph has an add_node method
+                // If not, this may need to be handled differently
+                internal_u = const_cast<Graph&>(original_graph).add_node(edge.first);
+            }
+            
+            // Handle node v
+            if (it_v != original_graph.node_map.end()) {
+                internal_v = it_v->second;
+            } else {
+                if (verbose) {
+                    std::cout << "Adding missing node " << edge.second << " to graph" << std::endl;
+                }
+                internal_v = const_cast<Graph&>(original_graph).add_node(edge.second);
+            }
+            
+            newly_added_edges.emplace_back(internal_u, internal_v);
+        }
+        
+        return newly_added_edges;
+    }
 };
 
 #endif // EDGE_EXTRACTOR_H
