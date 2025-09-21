@@ -4,6 +4,12 @@ import pandas as pd
 reference_edgelist_df = pd.read_csv(argv[1], sep="\t", header=None, names=["source", "target"])
 sbm_edgelist_df = pd.read_csv(argv[2], sep="\t", header=None, names=["source", "target"])
 
+# Ensure integer type for source and target columns
+reference_edgelist_df['source'] = reference_edgelist_df['source'].astype(int)
+reference_edgelist_df['target'] = reference_edgelist_df['target'].astype(int)
+sbm_edgelist_df['source'] = sbm_edgelist_df['source'].astype(int)
+sbm_edgelist_df['target'] = sbm_edgelist_df['target'].astype(int)
+
 # Get the degree counts for both reference and SBM edgelists (undirected)
 reference_all_nodes = pd.concat([reference_edgelist_df['source'], reference_edgelist_df['target']])
 sbm_all_nodes = pd.concat([sbm_edgelist_df['source'], sbm_edgelist_df['target']])

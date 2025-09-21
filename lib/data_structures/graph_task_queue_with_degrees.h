@@ -15,6 +15,7 @@
 #include "clustering.h"
 #include "available_node_degrees.h" // Our updated header with atomic manager
 #include "../io/requirements_io.h"
+#include "../io/g_io.h"
 
 using json = nlohmann::json;
 
@@ -51,66 +52,46 @@ private:
     }
     
     // Extract subgraph for a cluster (unchanged)
+    // Refactored extract_subgraph using add_edges_batch
     std::shared_ptr<Graph> extract_subgraph(const Graph& original, 
-                                           const std::unordered_set<uint32_t>& nodes, 
-                                           const std::unordered_set<uint32_t>& missing_nodes = {}) {
+                                        const std::unordered_set<uint32_t>& nodes, 
+                                        const std::unordered_set<uint32_t>& missing_nodes = {}) {
         auto subgraph = std::make_shared<Graph>();
         
         uint32_t total_nodes = nodes.size() + missing_nodes.size();
         
+        // Debug print
+        if (!missing_nodes.empty()) {
+            std::cout << "Extracting subgraph with " << total_nodes << " total nodes." << std::endl;
+            std::cout << "Number of nodes in SBM cluster: " << nodes.size() << std::endl;
+            std::cout << "Number of missing nodes: " << missing_nodes.size() << std::endl;
+        }
+        
+        // Initialize empty graph with correct number of nodes
+        subgraph->num_nodes = total_nodes;
+        subgraph->row_ptr.resize(subgraph->num_nodes + 1, 0);
+        subgraph->num_edges = 0;
+        
+        // Create node mappings
         std::unordered_map<uint32_t, uint32_t> node_to_sub;
         std::unordered_map<uint64_t, uint32_t> missing_to_sub;
         uint32_t sub_idx = 0;
         
+        // Map existing nodes
         for (uint32_t node : nodes) {
             node_to_sub[node] = sub_idx++;
         }
         
+        // Map missing nodes
         for (uint64_t missing_node : missing_nodes) {
             missing_to_sub[missing_node] = sub_idx++;
         }
         
-        subgraph->num_nodes = total_nodes;
-        subgraph->row_ptr.resize(subgraph->num_nodes + 1, 0);
-        
-        std::vector<uint32_t> edge_counts(subgraph->num_nodes, 0);
-        for (uint32_t orig_node : nodes) {
-            uint32_t sub_node = node_to_sub[orig_node];
-            
-            for (uint32_t j = original.row_ptr[orig_node]; j < original.row_ptr[orig_node + 1]; j++) {
-                uint32_t neighbor = original.col_idx[j];
-                if (nodes.count(neighbor) > 0) {
-                    edge_counts[sub_node]++;
-                }
-            }
-        }
-        
-        for (uint32_t i = 0; i < subgraph->num_nodes; i++) {
-            subgraph->row_ptr[i + 1] = subgraph->row_ptr[i] + edge_counts[i];
-        }
-        
-        subgraph->col_idx.resize(subgraph->row_ptr.back());
-        
-        std::vector<uint32_t> current_pos(subgraph->num_nodes, 0);
-        for (uint32_t i = 0; i < subgraph->num_nodes; i++) {
-            current_pos[i] = subgraph->row_ptr[i];
-        }
-        
-        for (uint32_t orig_node : nodes) {
-            uint32_t sub_node = node_to_sub[orig_node];
-            
-            for (uint32_t j = original.row_ptr[orig_node]; j < original.row_ptr[orig_node + 1]; j++) {
-                uint32_t neighbor = original.col_idx[j];
-                if (nodes.count(neighbor) > 0) {
-                    uint32_t sub_neighbor = node_to_sub[neighbor];
-                    subgraph->col_idx[current_pos[sub_node]++] = sub_neighbor;
-                }
-            }
-        }
-        
+        // Build node_map and id_map
         subgraph->node_map.clear();
         subgraph->id_map.resize(subgraph->num_nodes);
         
+        // Add existing nodes to maps
         for (const auto& [orig, sub] : node_to_sub) {
             if (original.id_map.size() > orig) {
                 uint64_t original_id = original.id_map[orig];
@@ -119,12 +100,53 @@ private:
             }
         }
         
+        // Add missing nodes to maps  
         for (const auto& [missing_id, sub] : missing_to_sub) {
             subgraph->node_map[missing_id] = sub;
             subgraph->id_map[sub] = missing_id;
         }
         
-        subgraph->num_edges = subgraph->col_idx.size() / 2;
+        // Collect edges to add
+        std::vector<std::pair<uint32_t, uint32_t>> edges_to_add;
+        
+        // Only process edges from existing nodes (missing nodes have no edges in original)
+        for (uint32_t orig_node : nodes) {
+            uint32_t sub_node = node_to_sub[orig_node];
+            
+            for (uint32_t j = original.row_ptr[orig_node]; j < original.row_ptr[orig_node + 1]; j++) {
+                uint32_t neighbor = original.col_idx[j];
+                
+                // Check if neighbor is in the subgraph (either existing or missing)
+                uint32_t sub_neighbor = UINT32_MAX;
+                
+                if (nodes.count(neighbor) > 0) {
+                    sub_neighbor = node_to_sub[neighbor];
+                } else {
+                    // Check if it's a missing node
+                    if (original.id_map.size() > neighbor) {
+                        uint64_t neighbor_id = original.id_map[neighbor];
+                        if (missing_nodes.count(neighbor_id) > 0) {
+                            sub_neighbor = missing_to_sub[neighbor_id];
+                        }
+                    }
+                }
+                
+                if (sub_neighbor != UINT32_MAX) {
+                    // Only add each edge once (avoid duplicates)
+                    if (sub_node < sub_neighbor) {
+                        edges_to_add.emplace_back(sub_node, sub_neighbor);
+                    }
+                }
+            }
+        }
+        
+        // Use add_edges_batch to properly add all edges
+        if (!edges_to_add.empty()) {
+            add_edges_batch(*subgraph, edges_to_add);
+        }
+        
+        std::cout << "Extracted subgraph with " << subgraph->num_nodes << " nodes and " 
+                << subgraph->num_edges << " edges using add_edges_batch." << std::endl;
         
         return subgraph;
     }
@@ -210,6 +232,10 @@ public:
             
             auto subgraph = extract_subgraph(graph, nodes, missing_nodes);
             subgraph->id = clustering.cluster_ids[cluster_idx];
+
+            std::cout << "Extracted subgraph for cluster " << subgraph->id 
+                      << " with " << subgraph->num_nodes << " nodes and " 
+                      << subgraph->num_edges << " edges." << std::endl;
             
             std::string cluster_id = clustering.cluster_ids[cluster_idx];
             uint32_t min_degree = requirements.get_connectivity_requirement(cluster_id);

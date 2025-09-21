@@ -21,6 +21,7 @@ include_directories(
     extlib/VieCut/lib             
     extlib/VieCut/extlib/growt
     extlib/VieCut/extlib/tlx
+    extlib/pcg-cpp/include
 )
 
 # Add nlohmann/json

@@ -4,3 +4,6 @@
 [submodule "extlib/VieCut"]
 	path = extlib/VieCut
 	url = https://github.com/vikramr2/VieCut.git
+[submodule "extlib/pcg-cpp"]
+	path = extlib/pcg-cpp
+	url = https://github.com/imneme/pcg-cpp.git

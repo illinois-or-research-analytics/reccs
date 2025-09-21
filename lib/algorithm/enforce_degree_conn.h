@@ -256,6 +256,10 @@ void enforce_degree_and_connectivity(Graph& g, uint32_t min_degree) {
     
     std::cout << "Added " << edges_to_add.size() << " edges for degree " 
               << min_degree << " and connectivity" << std::endl;
+
+    // DEBUG CODE
+    // save_graph_edgelist(g.id + "_min_degree_" + std::to_string(min_degree) + ".tsv", g, true);
+    // END DEBUG CODE
 }
 
 #endif // COMBINED_DEGREE_CONNECTIVITY_H

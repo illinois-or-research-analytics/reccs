@@ -10,6 +10,7 @@
 #include "../data_structures/graph.h"
 #include "../data_structures/node_degree.h"
 #include "../data_structures/available_node_degrees.h"
+#include "pcg_random.hpp"
 
 // Find connected components using BFS
 std::vector<std::vector<uint32_t>> find_connected_components_budget(const Graph& g) {
@@ -92,7 +93,7 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
     
     // Random number generator
     std::random_device rd;
-    std::mt19937 gen(rd());
+    pcg32 gen(rd());
     
     // Counters for statistics
     size_t total_edges_added = 0;
@@ -233,6 +234,15 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
     if (!edges_to_add.empty()) {
         add_edges_batch(g, edges_to_add);
     }
+
+    // DEBUG CODE
+    // // print edges_to_add into a 2 column TSV file using an fstream
+    // std::ofstream edge_file(g.id + "_connectivity_edges_added.tsv");
+    // for (const auto& edge : edges_to_add) {
+    //     edge_file << g.id_map[edge.first] << "\t" << g.id_map[edge.second] << "\n";
+    // }
+    // edge_file.close();
+    // END DEBUG CODE
     
     // Report final local available nodes
     const auto& final_available = task.get_local_available_nodes();
@@ -242,6 +252,10 @@ void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
               << "Degree corrected: " << degree_corrected_edges 
               << " (" << (total_edges_added > 0 ? (degree_corrected_edges * 100 / total_edges_added) : 0) 
               << "%). Remaining local budget nodes: " << final_available.size() << std::endl;
+
+    // DEBUG CODE
+    // save_graph_edgelist(g.id + "_connectivity_enforcement.tsv", g, true);
+    // END DEBUG CODE
 }
 
 #endif // ENFORCE_CONNECTIVITY_WITH_BUDGET_H

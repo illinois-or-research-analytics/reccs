@@ -12,6 +12,7 @@
 #include <random>
 #include "../utils/statics.h"
 #include "../data_structures/available_node_degrees.h"
+#include "pcg_random.hpp"
 
 /**
  * Degree-aware mincut enforcement using local degree management
@@ -42,7 +43,7 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
 
     int iteration = 0;
     std::random_device rd;
-    std::mt19937 gen(rd());
+    pcg32 gen(rd());
     
     // Counters for statistics
     size_t total_edges_added = 0;
@@ -52,6 +53,14 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
     auto existing_edges = statics::compute_existing_edges(g);
     auto edge_exists = statics::create_edge_exists_checker(existing_edges);
     
+    // Open an fstrean for added edges
+    // std::ofstream added_edges_file;
+    // added_edges_file.open(g.id + "_mincut_added_edges.tsv");
+    // if (!added_edges_file.is_open()) {
+    //     std::cerr << "Error: Could not open file to log added edges" << std::endl;
+    //     return;
+    // }
+
     while (true) {
         iteration++;
         std::cout << "\n--- Iteration " << iteration << " ---" << std::endl;
@@ -202,6 +211,13 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
         
         std::cout << "Adding " << edges_to_add.size() << " new cross-partition edges..." << std::endl;
         
+        // Log added edges to file
+        // for (const auto& edge : edges_to_add) {
+        //     uint64_t u_global = g.id_map[edge.first];
+        //     uint64_t v_global = g.id_map[edge.second];
+        //     added_edges_file << u_global << "\t" << v_global << "\n";
+        // }
+
         // Batch add the edges to the graph
         add_edges_batch(g, edges_to_add);
         
@@ -215,6 +231,9 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
             break;
         }
     }
+
+    // Close the added edges file
+    // added_edges_file.close();
     
     // Report final local available nodes
     const auto& final_available = task.get_local_available_nodes();
@@ -227,6 +246,8 @@ void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
               << ", Degree corrected: " << degree_corrected_edges 
               << " (" << (total_edges_added > 0 ? (degree_corrected_edges * 100 / total_edges_added) : 0) 
               << "%). Remaining local budget nodes: " << final_available.size() << std::endl;
+
+    //save_graph_edgelist(g.id + "_mincut_enforcement_" + std::to_string(min_cut_size) + ".tsv", g, true);
 }
 
 #endif // ENFORCE_MINCUT_WITH_BUDGET_H
