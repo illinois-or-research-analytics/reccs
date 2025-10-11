@@ -52,23 +52,6 @@ void enforce_min_degree_with_budget(GraphTaskWithDegrees& task) {
             zero_degree_count++;
         }
     }
-
-    // DEBUG: Print starting min degree to a file
-    // std::ofstream debug_file(g.id + "_min_degree_debug.txt");
-    // if (debug_file.is_open()) {
-    //     debug_file << "Cluster ID: " << g.id << "\n";
-    //     debug_file << "Minimum Degree Requirement: " << min_degree << "\n";
-    //     debug_file << "Total Nodes: " << g.num_nodes << "\n";
-    //     debug_file << "Zero Degree Nodes: " << zero_degree_count << "\n";
-    //     debug_file << "Nodes Needing Edges: " << nodes_needing_edges.size() << "\n";
-    //     debug_file << "Current Degrees:\n";
-    //     for (uint32_t i = 0; i < g.num_nodes; ++i) {
-    //         debug_file << "Node " << i << "(Global id: " << g.id_map[i] << "): Degree = " << current_degrees[i] << "\n";
-    //     }
-    //     debug_file.close();
-    // } else {
-    //     std::cerr << "Error: Could not open debug file for writing" << std::endl;
-    // }
     
     if (nodes_needing_edges.empty()) {
         std::cout << "All nodes already satisfy minimum degree requirement" << std::endl;
@@ -241,42 +224,16 @@ void enforce_min_degree_with_budget(GraphTaskWithDegrees& task) {
             }
         }
     }
-    // save_graph_edgelist(g.id + "_min_degree_" + std::to_string(min_degree) + "_" + std::to_string(g.num_nodes) + "_" + std::to_string(zero_degree_count) + "_pre.tsv", g, true);
     
     // Batch add all edges
     if (!edges_to_add.empty()) {
         add_edges_batch(g, edges_to_add);
     }
-
-    // print edges_to_add into a 2 column TSV file using an fstream
-    // std::ofstream out_file(g.id + "_min_degree_added_edges_" + std::to_string(min_degree) + "_" + std::to_string(g.num_nodes) + "_" + std::to_string(zero_degree_count) + ".tsv");
-    // if (!out_file.is_open()) {
-    //     std::cerr << "Error: Could not open output file for writing edges" << std::endl;
-    //     return;
-    // } 
-    // for (const auto& edge : edges_to_add) {
-    //     out_file << g.id_map[edge.first] << "\t" << g.id_map[edge.second] << "\n";
-    // }
-    // out_file.close();
     
     std::cout << "Added " << edges_to_add.size() << " edges for minimum degree " 
               << min_degree << ". Degree corrected: " << degree_corrected_edges 
               << " (" << (total_edges_added > 0 ? (degree_corrected_edges * 100 / total_edges_added) : 0) 
               << "%)" << std::endl;
-
-    // DEBUG: Print final degrees to a file
-    // std::ofstream final_debug_file(g.id + "_min_degree_final_debug.txt");
-    // if (final_debug_file.is_open()) {
-    //     final_debug_file << "Final Degrees After Enforcement:\n";
-    //     for (uint32_t i = 0; i < g.num_nodes; ++i) {
-    //         final_debug_file << "Node " << i << "(Global id: " << g.id_map[i] << "): Degree = " << current_degrees[i] << "\n";
-    //     }
-    //     final_debug_file.close();
-    // } else {
-    //     std::cerr << "Error: Could not open final debug file for writing" << std::endl;
-    // }
-
-    // save_graph_edgelist(g.id + "_min_degree_" + std::to_string(min_degree) + "_" + std::to_string(g.num_nodes) + "_" + std::to_string(zero_degree_count) + ".tsv", g, true);
 }
 
 #endif // ENFORCE_MIN_DEGREE_WITH_BUDGET_H

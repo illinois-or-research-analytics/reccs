@@ -9,15 +9,22 @@
 #include "../lib/data_structures/graph.h"
 #include "../lib/data_structures/clustering.h"
 #include "../lib/data_structures/graph_task_queue_pp.h"
+#include "../lib/data_structures/graph_task_queue_with_degrees.h"
 #include "../lib/io/g_io.h"
 #include "../lib/io/cluster_io.h"
 #include "../lib/io/requirements_io.h"
 #include "../lib/io/degseq_io.h"
 #include "../lib/utils/orchestrator.h"
 #include "../lib/utils/edge_extractor.h"
+#include "../lib/utils/statics.h"
+
 #include "../lib/algorithm/enforce_degree_conn.h"
 #include "../lib/algorithm/enforce_mincut.h"
 #include "../lib/algorithm/deg_seq_matching.h"
+
+#include "../lib/algorithm/enforce_degree_conn_with_budget.h"
+#include "../lib/algorithm/enforce_mincut_with_budget.h"
+#include "../lib/algorithm/deg_seq_matching_with_budget.h"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -34,6 +41,7 @@ void print_usage(const char* program_name) {
     std::cerr << "  -t <num_threads>  Number of threads to use (default: hardware concurrency)" << std::endl;
     std::cerr << "  -v                Verbose mode: print detailed progress information" << std::endl;
     std::cerr << "  -o <output_file>  Output file (default: 'output.tsv')" << std::endl;
+    std::cerr << "  --fast            Use fast mode without degree manager (default: use degree manager)" << std::endl;
     std::cerr << "  -h, --help        Show this help message and exit" << std::endl;
     std::cerr << std::endl;
     std::cerr << "Normal mode specific options:" << std::endl;
@@ -45,10 +53,14 @@ void print_usage(const char* program_name) {
     std::cerr << "  --unclustered-sbm <path>        Path to unclustered SBM graph file" << std::endl;
     std::cerr << "  --requirements <path>           Path to requirements CSV file" << std::endl;
     std::cerr << "  --degseq <path>                 Path to degree sequence JSON file" << std::endl;
+    std::cerr << "  --deficits <path>               Path to degree deficits JSON file (for standard mode)" << std::endl;
     std::cerr << std::endl;
     std::cerr << "Examples:" << std::endl;
     std::cerr << "  Normal mode:" << std::endl;
     std::cerr << "    " << program_name << " graph.tsv -c clusters.tsv -t 8 -v -o output.tsv" << std::endl;
+    std::cerr << std::endl;
+    std::cerr << "  Fast mode (without degree manager):" << std::endl;
+    std::cerr << "    " << program_name << " graph.tsv -c clusters.tsv --fast -t 8 -v -o output.tsv" << std::endl;
     std::cerr << std::endl;
     std::cerr << "  Checkpoint mode:" << std::endl;
     std::cerr << "    " << program_name << " --checkpoint -c clusters.tsv \\" << std::endl;
@@ -61,28 +73,37 @@ struct CheckpointArgs {
     std::string unclustered_sbm_path;
     std::string requirements_path;
     std::string degseq_path;
+    std::string deficits_path;  // For standard mode (non-fast)
     
-    bool are_all_provided() const {
+    bool are_base_args_provided() const {
         return !clustered_sbm_path.empty() && 
                !unclustered_sbm_path.empty() && 
                !requirements_path.empty() && 
                !degseq_path.empty();
     }
     
-    std::vector<std::string> get_missing_args() const {
+    std::vector<std::string> get_missing_args(bool fast_mode) const {
         std::vector<std::string> missing;
         if (clustered_sbm_path.empty()) missing.push_back("--clustered-sbm");
         if (unclustered_sbm_path.empty()) missing.push_back("--unclustered-sbm");
         if (requirements_path.empty()) missing.push_back("--requirements");
         if (degseq_path.empty()) missing.push_back("--degseq");
+        if (!fast_mode && deficits_path.empty()) missing.push_back("--deficits");
         return missing;
     }
     
     bool files_exist() const {
-        return fs::exists(clustered_sbm_path) && 
-               fs::exists(unclustered_sbm_path) && 
-               fs::exists(requirements_path) && 
-               fs::exists(degseq_path);
+        bool base_exist = fs::exists(clustered_sbm_path) && 
+                         fs::exists(unclustered_sbm_path) && 
+                         fs::exists(requirements_path) && 
+                         fs::exists(degseq_path);
+        
+        // deficits file is optional in checkpoint mode if not provided
+        if (!deficits_path.empty() && !fs::exists(deficits_path)) {
+            return false;
+        }
+        
+        return base_exist;
     }
     
     std::vector<std::string> get_missing_files() const {
@@ -91,6 +112,7 @@ struct CheckpointArgs {
         if (!fs::exists(unclustered_sbm_path)) missing.push_back(unclustered_sbm_path);
         if (!fs::exists(requirements_path)) missing.push_back(requirements_path);
         if (!fs::exists(degseq_path)) missing.push_back(degseq_path);
+        if (!deficits_path.empty() && !fs::exists(deficits_path)) missing.push_back(deficits_path);
         return missing;
     }
 };
@@ -108,6 +130,7 @@ int main(int argc, char** argv) {
     int num_threads = std::thread::hardware_concurrency();
     bool verbose = false;
     bool checkpoint_mode = false;
+    bool fast_mode = false;
     CheckpointArgs checkpoint_args;
     
     // Check if first argument is --checkpoint
@@ -119,6 +142,8 @@ int main(int argc, char** argv) {
             std::string arg = argv[i];
             if (arg == "-v") {
                 verbose = true;
+            } else if (arg == "--fast") {
+                fast_mode = true;
             } else if (arg == "-t" && i + 1 < argc) {
                 num_threads = std::stoi(argv[++i]);
             } else if (arg == "-o" && i + 1 < argc) {
@@ -133,6 +158,8 @@ int main(int argc, char** argv) {
                 checkpoint_args.requirements_path = argv[++i];
             } else if (arg == "--degseq" && i + 1 < argc) {
                 checkpoint_args.degseq_path = argv[++i];
+            } else if (arg == "--deficits" && i + 1 < argc) {
+                checkpoint_args.deficits_path = argv[++i];
             } else if (arg == "-h" || arg == "--help") {
                 print_usage(argv[0]);
                 return 0;
@@ -144,9 +171,9 @@ int main(int argc, char** argv) {
         }
         
         // Validate checkpoint arguments
-        if (!checkpoint_args.are_all_provided()) {
-            std::cerr << "Error: In checkpoint mode, all checkpoint arguments are required." << std::endl;
-            auto missing = checkpoint_args.get_missing_args();
+        if (!checkpoint_args.are_base_args_provided()) {
+            std::cerr << "Error: In checkpoint mode, required arguments are missing." << std::endl;
+            auto missing = checkpoint_args.get_missing_args(fast_mode);
             std::cerr << "Missing arguments: ";
             for (size_t i = 0; i < missing.size(); ++i) {
                 std::cerr << missing[i];
@@ -189,6 +216,8 @@ int main(int argc, char** argv) {
             std::string arg = argv[i];
             if (arg == "-v") {
                 verbose = true;
+            } else if (arg == "--fast") {
+                fast_mode = true;
             } else if (arg == "-t" && i + 1 < argc) {
                 num_threads = std::stoi(argv[++i]);
             } else if (arg == "-c" && i + 1 < argc) {
@@ -222,6 +251,8 @@ int main(int argc, char** argv) {
     std::string unclustered_sbm_graph_path;
     std::string requirements_filename;
     std::string degseq_filename;
+    std::string deficits_filename;
+    std::string temp_dir;
     
     if (checkpoint_mode) {
         if (verbose) {
@@ -233,11 +264,13 @@ int main(int argc, char** argv) {
         unclustered_sbm_graph_path = checkpoint_args.unclustered_sbm_path;
         requirements_filename = checkpoint_args.requirements_path;
         degseq_filename = checkpoint_args.degseq_path;
+        deficits_filename = checkpoint_args.deficits_path;
         
     } else {
         // Normal mode - run orchestrator
         if (verbose) {
             std::cout << "Running orchestrator..." << std::endl;
+            std::cout << "Mode: " << (fast_mode ? "FAST (without degree manager)" : "STANDARD (with degree manager)") << std::endl;
         }
         
         // Create a temp directory for intermediate files
@@ -267,6 +300,7 @@ int main(int argc, char** argv) {
         unclustered_sbm_graph_path = temp_dir + "/unclustered_sbm/syn_sbm.tsv";
         requirements_filename = temp_dir + "/clustered_stats.csv";
         degseq_filename = temp_dir + "/clustered_stats_degree_sequences.json";
+        deficits_filename = temp_dir + "/degree_deficits.json";
     }
     
     // Load the clustered SBM graph and clustering
@@ -329,42 +363,113 @@ int main(int argc, char** argv) {
         requirements_loader.print_statistics();
     }
 
-    // Load the graph task queue
-    GraphTaskQueuePP task_queue;
+    std::vector<std::shared_ptr<Graph>> completed_subgraphs;
 
-    // Set up the task functions
-    task_queue.set_task_functions(
-        // Connectivity enforcement (handles both degree and connectivity)
-        [](Graph& g, uint32_t min_degree) {
-            enforce_degree_and_connectivity(g, min_degree);
-        },
-        
-        // WCC stitching
-        [](Graph& g, uint32_t min_degree) {
-            enforce_mincut(g, min_degree);
-        },
-        
-        // Degree sequence matching
-        [](Graph& g, std::shared_ptr<const std::vector<uint32_t>> target_sequence) {
-            if (target_sequence && !target_sequence->empty()) {
-                std::cout << "  Processing degree sequence matching with target sequence of size "
-                          << target_sequence->size() << std::endl;
-                match_degree_sequence(g, target_sequence);
+    if (fast_mode) {
+        // Load the graph task queue
+        GraphTaskQueuePP task_queue;
+
+        // Set up the task functions
+        task_queue.set_task_functions(
+            // Connectivity enforcement (handles both degree and connectivity)
+            [](Graph& g, uint32_t min_degree) {
+                enforce_degree_and_connectivity(g, min_degree);
+            },
+            
+            // WCC stitching
+            [](Graph& g, uint32_t min_degree) {
+                enforce_mincut(g, min_degree);
+            },
+            
+            // Degree sequence matching
+            [](Graph& g, std::shared_ptr<const std::vector<uint32_t>> target_sequence) {
+                if (target_sequence && !target_sequence->empty()) {
+                    std::cout << "  Processing degree sequence matching with target sequence of size "
+                            << target_sequence->size() << std::endl;
+                    match_degree_sequence(g, target_sequence);
+                } else {
+                    std::cout << "  No target degree sequence provided, skipping matching." << std::endl;
+                }
+            }
+        );
+
+        task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader, degseq_json);
+
+        if (verbose) {
+            std::cout << "Initialized PP task queue with " << task_queue.queue_size() << " tasks." << std::endl;
+        }
+
+        task_queue.process_all_tasks();
+        completed_subgraphs = task_queue.get_completed_subgraphs();
+    } else {
+        // STANDARD MODE: Reuse RECCS+ queue with PP-style functions
+        if (verbose) {
+            std::cout << "\n=== STANDARD MODE PROCESSING ===" << std::endl;
+            std::cout << "Using RECCS+ degree-aware queue with PP-style pipeline..." << std::endl;
+        }
+
+        // Check if deficits file exists, if not in checkpoint mode, it should be in temp_dir
+        if (!fast_mode && deficits_filename.empty()) {
+            if (!temp_dir.empty()) {
+                deficits_filename = temp_dir + "/degree_deficits.json";
             } else {
-                std::cout << "  No target degree sequence provided, skipping matching." << std::endl;
+                std::cerr << "Error: Degree deficits file required for standard mode but not found" << std::endl;
+                return 1;
             }
         }
-    );
+        
+        if (!fs::exists(deficits_filename)) {
+            std::cerr << "Error: Degree deficits file not found at: " << deficits_filename << std::endl;
+            return 1;
+        }
 
-    task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader, degseq_json);
-    task_queue.process_all_tasks();
+        // Use degree-aware task queue with budget tracking
+        GraphTaskQueueWithDegrees task_queue;
 
-    if (verbose) {
-        std::cout << "Initialized task queue with " << task_queue.queue_size() << " tasks." << std::endl;
+        // Initialize degree manager
+        task_queue.initialize_degree_manager(deficits_filename);
+
+        if (verbose) {
+            auto initial_stats = task_queue.get_degree_manager()->get_stats();
+            std::cout << "\n=== INITIAL DEGREE BUDGET STATISTICS ===" << std::endl;
+            std::cout << "Available nodes: " << initial_stats.total_available_nodes << std::endl;
+            std::cout << "Total degree budget: " << initial_stats.total_available_degrees << std::endl;
+            std::cout << "Average budget per node: " << std::fixed << std::setprecision(2) 
+                      << initial_stats.avg_available_degree << std::endl;
+        }
+
+        // Set degree-aware task functions
+        task_queue.set_task_functions(
+            [](GraphTaskWithDegrees& task) {
+                enforce_degree_and_connectivity_with_budget(task);
+            },
+            [](GraphTaskWithDegrees& task) {
+                enforce_mincut_with_budget(task);
+            },
+            [](GraphTaskWithDegrees& task) {
+                match_degree_sequence_with_budget(task);
+            }
+        );
+
+        task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader);
+
+        if (verbose) {
+            std::cout << "Initialized RECCS+ queue with " << task_queue.queue_size() 
+                      << " tasks for PP-style processing." << std::endl;
+        }
+
+        task_queue.process_all_tasks();
+
+        if (verbose) {
+            auto final_stats = task_queue.get_degree_manager()->get_stats();
+            std::cout << "\n=== FINAL DEGREE BUDGET STATISTICS ===" << std::endl;
+            std::cout << "Remaining available nodes: " << final_stats.total_available_nodes << std::endl;
+            std::cout << "Remaining degree budget: " << final_stats.total_available_degrees << std::endl;
+        }
+
+        completed_subgraphs = task_queue.get_completed_subgraphs();
     }
 
-    // Retrieve completed subgraphs
-    auto completed_subgraphs = task_queue.get_completed_subgraphs();
     if (verbose) {
         std::cout << "Processed " << completed_subgraphs.size() << " subgraphs." << std::endl;
     }
@@ -408,10 +513,12 @@ int main(int argc, char** argv) {
     }
 
     if (verbose) {
-        // Print timing information
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
+        std::cout << "\n=== PROCESSING COMPLETE ===" << std::endl;
+        std::cout << "Mode: " << (fast_mode ? "FAST" : "STANDARD") << std::endl;
         std::cout << "Total execution time: " << duration << " seconds" << std::endl;
+        std::cout << "Output written to: " << output_file << std::endl;
     }
     
     return 0;

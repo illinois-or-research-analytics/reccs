@@ -25,8 +25,8 @@ def main(
         print("Reading input files...")
         file_read_start = time.time()
     
-    edge_df = pd.read_csv(edge_input, sep='\t', header=None)
-    cluster_df = pd.read_csv(cluster_input, sep='\t', header=None)
+    edge_df = pd.read_csv(edge_input, sep='\t', header=None, dtype=str)
+    cluster_df = pd.read_csv(cluster_input, sep='\t', header=None, dtype=str)
     
     if verbose:
         file_read_time = time.time() - file_read_start
@@ -125,4 +125,3 @@ if __name__ == "__main__":
         print("=== SPLITTER FAILED ===")
         traceback.print_exc()
         raise e
-    
