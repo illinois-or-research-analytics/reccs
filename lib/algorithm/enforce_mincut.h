@@ -18,7 +18,7 @@
  * Degree-aware mincut enforcement using local degree management
  * Each task operates on its own local degree budgets - NO SHARED STATE!
  */
-void enforce_mincut_with_budget(GraphTaskWithDegrees& task) {
+void enforce_mincut(GraphTaskWithDegrees& task) {
     Graph& g = *task.subgraph;
     uint32_t min_cut_size = task.min_degree_requirement;
 

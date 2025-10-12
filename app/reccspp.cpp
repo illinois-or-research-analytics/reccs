@@ -20,8 +20,8 @@
 #include "../lib/utils/edge_extractor.h"
 #include "../lib/utils/statics.h"
 
-#include "../lib/algorithm/enforce_degree_conn_with_budget.h"
-#include "../lib/algorithm/enforce_mincut_with_budget.h"
+#include "../lib/algorithm/enforce_degree_conn.h"
+#include "../lib/algorithm/enforce_mincut.h"
 #include "../lib/algorithm/deg_seq_matching_pp.h"
 
 namespace fs = std::filesystem;
@@ -400,10 +400,10 @@ int main(int argc, char** argv) {
     // Set degree-aware task functions
     task_queue.set_task_functions(
         [](GraphTaskWithDegrees& task) {
-            enforce_degree_and_connectivity_with_budget(task);
+            enforce_degree_and_connectivity(task);
         },
         [](GraphTaskWithDegrees& task) {
-            enforce_mincut_with_budget(task);
+            enforce_mincut(task);
         },
         [](GraphTaskWithDegrees& task) {
             match_degree_sequence_pp(task);

@@ -49,7 +49,7 @@ std::vector<std::vector<uint32_t>> find_connected_components_budget(const Graph&
  * Degree-aware connectivity enforcement using local degree management
  * Each task operates on its own local degree budgets - NO SHARED STATE!
  */
-void enforce_connectivity_with_budget(GraphTaskWithDegrees& task) {
+void enforce_connectivity(GraphTaskWithDegrees& task) {
     Graph& g = *task.subgraph;
     uint32_t min_degree = task.min_degree_requirement;
 

@@ -50,7 +50,7 @@ std::vector<std::vector<uint32_t>> find_connected_components_budget(const Graph&
  * Combined degree enforcement and connectivity with budget awareness
  * Uses randomized edge selection (like reference files) to avoid inflating diameter
  */
-void enforce_degree_and_connectivity_with_budget(GraphTaskWithDegrees& task) {
+void enforce_degree_and_connectivity(GraphTaskWithDegrees& task) {
     Graph& g = *task.subgraph;
     uint32_t min_degree = task.min_degree_requirement;
     

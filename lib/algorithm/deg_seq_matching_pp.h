@@ -1,5 +1,5 @@
-#ifndef DEG_SEQ_MATCHING_WITH_BUDGET_H
-#define DEG_SEQ_MATCHING_WITH_BUDGET_H
+#ifndef DEG_SEQ_MATCHING_PP_H
+#define DEG_SEQ_MATCHING_PP_H
 
 #include <vector>
 #include <memory>
@@ -182,4 +182,4 @@ void match_degree_sequence_pp(GraphTaskWithDegrees& task) {
               << ", Budget consumed: " << budget_consumed << std::endl;
 }
 
-#endif // DEG_SEQ_MATCHING_WITH_BUDGET_H
+#endif // DEG_SEQ_MATCHING_PP_H

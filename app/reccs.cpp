@@ -19,9 +19,9 @@
 #include "../lib/utils/edge_extractor.h"
 #include "../lib/utils/statics.h"
 
-#include "../lib/algorithm/enforce_min_degree_with_budget.h"
-#include "../lib/algorithm/enforce_connectivity_with_budget.h"
-#include "../lib/algorithm/enforce_mincut_with_budget.h"
+#include "../lib/algorithm/enforce_min_degree.h"
+#include "../lib/algorithm/enforce_connectivity.h"
+#include "../lib/algorithm/enforce_mincut.h"
 
 #include "../lib/algorithm/deg_seq_matching_v2.h"
 #include "../lib/algorithm/deg_seq_matching_v1.h"
@@ -379,13 +379,13 @@ int main(int argc, char** argv) {
     // Set degree-aware task functions
     task_queue.set_task_functions(
         [](GraphTaskWithDegrees& task) {
-            enforce_min_degree_with_budget(task);
+            enforce_min_degree(task);
         },
         [](GraphTaskWithDegrees& task) {
-            enforce_connectivity_with_budget(task);
+            enforce_connectivity(task);
         },
         [](GraphTaskWithDegrees& task) {
-            enforce_mincut_with_budget(task);
+            enforce_mincut(task);
         }
     );
 
