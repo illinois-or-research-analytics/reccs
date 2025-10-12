@@ -1,3 +1,7 @@
+/**
+ * RECCS++: The RECCS Graph Generation tool with algorithmic speedups
+ */
+
 #include <iostream>
 #include <chrono>
 #include <omp.h>

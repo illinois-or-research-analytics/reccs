@@ -1,3 +1,7 @@
+/**
+ * RECCS+: The RECCS Graph Generation Tool with Full Algorithmic Fidelity to RECCS
+ */
+
 #include <iostream>
 #include <chrono>
 #include <omp.h>
