@@ -15,7 +15,7 @@
 #include "pcg_random.hpp"
 
 // Find connected components using BFS
-std::vector<std::vector<uint32_t>> find_connected_components_budget(const Graph& g) {
+std::vector<std::vector<uint32_t>> find_connected_components(const Graph& g) {
     std::vector<bool> visited(g.num_nodes, false);
     std::vector<std::vector<uint32_t>> components;
     
@@ -51,7 +51,7 @@ std::vector<std::vector<uint32_t>> find_connected_components_budget(const Graph&
  * Degree-aware connectivity enforcement using local degree management
  * Each task operates on its own local degree budgets - NO SHARED STATE!
  */
-void enforce_connectivity(GraphTaskWithDegrees& task) {
+void enforce_connectivity(GraphTask& task) {
     Graph& g = *task.subgraph;
     uint32_t min_degree = task.min_degree_requirement;
 
@@ -62,7 +62,7 @@ void enforce_connectivity(GraphTaskWithDegrees& task) {
               << g.id << ". Minimum degree: " << min_degree << std::endl;
 
     // Find all connected components
-    auto components = find_connected_components_budget(g);
+    auto components = find_connected_components(g);
     
     // If already connected, we're done
     if (components.size() <= 1) {

@@ -9,7 +9,7 @@
 
 #include "../lib/data_structures/graph.h"
 #include "../lib/data_structures/clustering.h"
-#include "../lib/data_structures/graph_task_queue_with_degrees.h"
+#include "../lib/data_structures/graph_task_queue.h"
 
 #include "../lib/io/g_io.h"
 #include "../lib/io/cluster_io.h"
@@ -370,7 +370,7 @@ int main(int argc, char** argv) {
     }
     
     // Use degree-aware task queue
-    GraphTaskQueueWithDegrees task_queue;
+    GraphTaskQueue task_queue;
 
     // Initialize degree manager
     std::string deficits_path = checkpoint_mode ? checkpoint_args.deficits_path : temp_dir + "/degree_deficits.json";
@@ -378,13 +378,13 @@ int main(int argc, char** argv) {
 
     // Set degree-aware task functions
     task_queue.set_task_functions(
-        [](GraphTaskWithDegrees& task) {
+        [](GraphTask& task) {
             enforce_min_degree(task);
         },
-        [](GraphTaskWithDegrees& task) {
+        [](GraphTask& task) {
             enforce_connectivity(task);
         },
-        [](GraphTaskWithDegrees& task) {
+        [](GraphTask& task) {
             enforce_mincut(task);
         }
     );

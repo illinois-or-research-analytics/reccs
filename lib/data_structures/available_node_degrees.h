@@ -256,7 +256,7 @@ private:
 /**
  * Simplified GraphTask - no more local degree management needed!
  */
-struct GraphTaskWithDegrees {
+struct GraphTask {
     // Original task data
     std::shared_ptr<Graph> subgraph;
     TaskType task_type;
@@ -270,7 +270,7 @@ struct GraphTaskWithDegrees {
     // Cluster node IDs
     std::unordered_set<uint64_t> cluster_node_ids;
     
-    GraphTaskWithDegrees(
+    GraphTask(
         std::shared_ptr<Graph> g, 
         TaskType t, 
         const std::string& cid,
@@ -313,7 +313,7 @@ namespace degree_aware_stages {
  * Get available nodes for this cluster (from shared atomic manager)
  */
 std::unordered_set<uint64_t> get_cluster_available_nodes(
-    const GraphTaskWithDegrees& task) {
+    const GraphTask& task) {
     const auto available_nodes = task.get_local_available_nodes();
     return std::unordered_set<uint64_t>(available_nodes.begin(), available_nodes.end());
 }
@@ -324,7 +324,7 @@ std::unordered_set<uint64_t> get_cluster_available_nodes(
 uint32_t select_edge_endpoint(
     const std::vector<uint32_t>& candidates,
     const Graph& g,
-    const GraphTaskWithDegrees& task,
+    const GraphTask& task,
     std::mt19937& gen) {
     
     if (candidates.empty()) return UINT32_MAX;

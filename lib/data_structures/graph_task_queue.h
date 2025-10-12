@@ -20,9 +20,9 @@
 
 using json = nlohmann::json;
 
-class GraphTaskQueueWithDegrees {
+class GraphTaskQueue {
 private:
-    std::queue<GraphTaskWithDegrees> task_queue;
+    std::queue<GraphTask> task_queue;
     mutable std::mutex queue_mutex;
     std::atomic<size_t> tasks_processed{0};
     std::atomic<size_t> total_tasks_created{0};
@@ -35,9 +35,9 @@ private:
     std::vector<std::shared_ptr<Graph>> completed_subgraphs;
     
     // Task functions - now take the atomic task type
-    std::function<void(GraphTaskWithDegrees&)> min_deg_enforce_fn;
-    std::function<void(GraphTaskWithDegrees&)> cc_stitching_fn;
-    std::function<void(GraphTaskWithDegrees&)> wcc_stitching_fn;
+    std::function<void(GraphTask&)> min_deg_enforce_fn;
+    std::function<void(GraphTask&)> cc_stitching_fn;
+    std::function<void(GraphTask&)> wcc_stitching_fn;
 
     // Map subgraph pointer to its mutex
     std::unordered_map<Graph*, std::unique_ptr<std::mutex>> subgraph_mutexes;
@@ -152,7 +152,7 @@ private:
         return subgraph;
     }
 
-    bool try_get_task(GraphTaskWithDegrees& task) {
+    bool try_get_task(GraphTask& task) {
         std::lock_guard<std::mutex> lock(queue_mutex);
         if (task_queue.empty()) {
             return false;
@@ -163,14 +163,14 @@ private:
         return true;
     }
     
-    void add_task(const GraphTaskWithDegrees& task) {
+    void add_task(const GraphTask& task) {
         std::lock_guard<std::mutex> lock(queue_mutex);
         task_queue.push(task);
         total_tasks_created++;
     }
     
 public:
-    GraphTaskQueueWithDegrees() = default;
+    GraphTaskQueue() = default;
     
     /**
      * Initialize with degree deficits from JSON file - creates shared atomic manager
@@ -184,9 +184,9 @@ public:
     }
     
     void set_task_functions(
-        std::function<void(GraphTaskWithDegrees&)> min_deg_enforce,
-        std::function<void(GraphTaskWithDegrees&)> cc_stitch,
-        std::function<void(GraphTaskWithDegrees&)> wcc_stitch) {
+        std::function<void(GraphTask&)> min_deg_enforce,
+        std::function<void(GraphTask&)> cc_stitch,
+        std::function<void(GraphTask&)> wcc_stitch) {
         
         min_deg_enforce_fn = min_deg_enforce;
         cc_stitching_fn = cc_stitch;
@@ -260,7 +260,7 @@ public:
             }
             
             // Create task with shared atomic degree manager
-            add_task(GraphTaskWithDegrees(
+            add_task(GraphTask(
                 subgraph,
                 TaskType::MIN_DEG_ENFORCE,
                 cluster_id,
@@ -276,7 +276,7 @@ public:
     }
     
     bool process_next_task() {
-        GraphTaskWithDegrees task(nullptr, TaskType::MIN_DEG_ENFORCE, "", 0, 0, nullptr, {});
+        GraphTask task(nullptr, TaskType::MIN_DEG_ENFORCE, "", 0, 0, nullptr, {});
 
         if (!try_get_task(task)) return false;
 

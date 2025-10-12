@@ -9,7 +9,7 @@
 
 #include "../lib/data_structures/graph.h"
 #include "../lib/data_structures/clustering.h"
-#include "../lib/data_structures/graph_task_queue_with_degrees.h"
+#include "../lib/data_structures/graph_task_queue.h"
 
 #include "../lib/io/g_io.h"
 #include "../lib/io/cluster_io.h"
@@ -383,7 +383,7 @@ int main(int argc, char** argv) {
     }
 
     // Use degree-aware task queue with budget tracking
-    GraphTaskQueueWithDegrees task_queue;
+    GraphTaskQueue task_queue;
 
     // Initialize degree manager
     task_queue.initialize_degree_manager(deficits_filename);
@@ -399,13 +399,13 @@ int main(int argc, char** argv) {
 
     // Set degree-aware task functions
     task_queue.set_task_functions(
-        [](GraphTaskWithDegrees& task) {
+        [](GraphTask& task) {
             enforce_degree_and_connectivity(task);
         },
-        [](GraphTaskWithDegrees& task) {
+        [](GraphTask& task) {
             enforce_mincut(task);
         },
-        [](GraphTaskWithDegrees& task) {
+        [](GraphTask& task) {
             match_degree_sequence_pp(task);
         }
     );

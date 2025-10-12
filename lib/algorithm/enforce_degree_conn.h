@@ -16,7 +16,7 @@
 #include "pcg_random.hpp"
 
 // Helper: Find connected components using BFS
-std::vector<std::vector<uint32_t>> find_connected_components_budget(const Graph& g) {
+std::vector<std::vector<uint32_t>> find_connected_components(const Graph& g) {
     std::vector<bool> visited(g.num_nodes, false);
     std::vector<std::vector<uint32_t>> components;
     
@@ -52,7 +52,7 @@ std::vector<std::vector<uint32_t>> find_connected_components_budget(const Graph&
  * Combined degree enforcement and connectivity with budget awareness
  * Uses randomized edge selection (like reference files) to avoid inflating diameter
  */
-void enforce_degree_and_connectivity(GraphTaskWithDegrees& task) {
+void enforce_degree_and_connectivity(GraphTask& task) {
     Graph& g = *task.subgraph;
     uint32_t min_degree = task.min_degree_requirement;
     
@@ -124,7 +124,7 @@ void enforce_degree_and_connectivity(GraphTaskWithDegrees& task) {
     
     bool timeout_reached = false;
     
-    auto components = find_connected_components_budget(g);
+    auto components = find_connected_components(g);
     
     std::cout << "[Cluster " << task.cluster_id << "] Found " << components.size() 
               << " connected components" << std::endl;
@@ -387,9 +387,9 @@ timeout_exit:
     std::cout << "  - Budget consumed: " << budget_consumed << std::endl;
     
     // Final connectivity check
-    auto final_components = find_connected_components_budget(g);
-    std::cout << "[Cluster " << task.cluster_id << "] Final: " << final_components.size() 
-              << " connected components" << std::endl;
+    // auto final_components = find_connected_components(g);
+    // std::cout << "[Cluster " << task.cluster_id << "] Final: " << final_components.size() 
+    //           << " connected components" << std::endl;
     
     // Count nodes that didn't reach min degree
     uint32_t under_degree_nodes = 0;
