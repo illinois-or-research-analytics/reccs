@@ -54,7 +54,7 @@ This will run automated tests before you commit any changes to Python or C++ fil
 
 RECCS++ provides two executables with different algorithmic approaches:
 
-- **`./reccspp`** - RECCS++ with full algorithmic speedups and PP-style degree sequence matching
+- **`./reccspp`** - RECCS++ with full algorithmic speedups and ++style degree sequence matching
 - **`./reccs`** - RECCS+ with full algorithmic fidelity to original RECCS
 
 Both executables support two modes: **Normal mode** (runs full pipeline) and **Checkpoint mode** (skips orchestrator using pre-generated files).
