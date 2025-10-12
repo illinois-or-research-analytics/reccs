@@ -2,6 +2,8 @@
 
 **Scalable REalistic Cluster Connectivity Simulator for synthetic network generation**
 
+![RECCS+/++ Pipeline](assets/full_pipeline_figure.jpg)
+
 ## 🛠️ Requirements
 
 - **cmake** (3.26.5+)
