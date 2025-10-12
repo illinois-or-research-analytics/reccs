@@ -7,9 +7,11 @@
 #include <algorithm>
 #include <set>
 #include <random>
+
 #include "../data_structures/graph.h"
 #include "../data_structures/node_degree.h"
 #include "../data_structures/available_node_degrees.h"
+
 #include "pcg_random.hpp"
 
 /**

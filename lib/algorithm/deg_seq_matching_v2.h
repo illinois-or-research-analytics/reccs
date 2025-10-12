@@ -13,6 +13,7 @@
 #include <sstream>
 #include <filesystem>
 #include <cstdlib>
+
 #include "../data_structures/graph.h"
 #include "../data_structures/node_degree.h"
 #include "../io/g_io.h"

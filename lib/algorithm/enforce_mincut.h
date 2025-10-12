@@ -10,8 +10,10 @@
 #include <tuple>
 #include <set>
 #include <random>
+
 #include "../utils/statics.h"
 #include "../data_structures/available_node_degrees.h"
+
 #include "pcg_random.hpp"
 
 /**

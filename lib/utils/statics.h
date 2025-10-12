@@ -5,6 +5,7 @@
 #include <memory>
 #include <unordered_set>
 #include <functional>
+
 #include "../data_structures/graph.h"
 
 namespace statics {

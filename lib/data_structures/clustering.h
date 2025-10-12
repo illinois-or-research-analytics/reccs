@@ -7,6 +7,7 @@
 #include <string>
 #include <cstdint>
 #include <iostream>
+
 #include "graph.h"
 
 // Dual representation of clustering information

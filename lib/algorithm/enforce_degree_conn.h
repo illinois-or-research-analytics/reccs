@@ -7,10 +7,12 @@
 #include <algorithm>
 #include <random>
 #include <set>
+
 #include "../data_structures/graph.h"
 #include "../data_structures/node_degree.h"
 #include "../data_structures/available_node_degrees.h"
 #include "../utils/statics.h"
+
 #include "pcg_random.hpp"
 
 // Helper: Find connected components using BFS

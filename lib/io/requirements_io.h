@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <vector>
+
 #include "mapped_file.h"
 
 // Structure to hold cluster requirements

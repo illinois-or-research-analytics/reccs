@@ -11,10 +11,12 @@
 #include <unordered_map>
 #include <utility>
 #include <chrono>
-#include <algorithm>  // Add this for std::sort
-#include "../data_structures/graph.h"
-#include "mapped_file.h"
+#include <algorithm>  // For std::sort
 #include <omp.h>
+
+#include "../data_structures/graph.h"
+
+#include "mapped_file.h"
 
 Graph load_undirected_tsv_edgelist_parallel(const std::string& filename, int num_threads = std::thread::hardware_concurrency(), bool verbose = false) {
     Graph graph;

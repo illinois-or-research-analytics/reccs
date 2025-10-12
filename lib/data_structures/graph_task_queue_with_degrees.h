@@ -11,9 +11,10 @@
 #include <mutex>
 #include <atomic>
 #include <omp.h>
+
 #include "graph.h"
 #include "clustering.h"
-#include "available_node_degrees.h" // Our updated header with atomic manager
+#include "available_node_degrees.h" 
 #include "../io/requirements_io.h"
 #include "../io/g_io.h"
 

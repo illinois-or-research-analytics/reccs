@@ -10,8 +10,10 @@
 #include <utility>
 #include <chrono>
 #include <iomanip>
+
 #include "../data_structures/clustering.h"
 #include "../data_structures/graph.h"
+
 #include "mapped_file.h"
 
 // Load clustering from a TSV file (single-threaded, efficient)

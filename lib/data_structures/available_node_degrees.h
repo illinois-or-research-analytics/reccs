@@ -10,6 +10,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <vector>
+
 #include "graph.h"
 
 using json = nlohmann::json;
