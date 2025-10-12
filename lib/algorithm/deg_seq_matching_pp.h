@@ -17,7 +17,7 @@
  * Matches the degree sequence of a graph using pre-computed degree deficits.
  * This replaces the old degree sequence matching with node-to-node deficit consumption.
  */
-void match_degree_sequence_with_budget(GraphTaskWithDegrees& task) {
+void match_degree_sequence_pp(GraphTaskWithDegrees& task) {
     // Extract graph and degree manager from task
     Graph& g = *task.subgraph;
     auto degree_manager = task.degree_manager;

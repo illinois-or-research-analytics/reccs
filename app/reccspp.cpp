@@ -22,7 +22,7 @@
 
 #include "../lib/algorithm/enforce_degree_conn_with_budget.h"
 #include "../lib/algorithm/enforce_mincut_with_budget.h"
-#include "../lib/algorithm/deg_seq_matching_with_budget.h"
+#include "../lib/algorithm/deg_seq_matching_pp.h"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -406,7 +406,7 @@ int main(int argc, char** argv) {
             enforce_mincut_with_budget(task);
         },
         [](GraphTaskWithDegrees& task) {
-            match_degree_sequence_with_budget(task);
+            match_degree_sequence_pp(task);
         }
     );
 
