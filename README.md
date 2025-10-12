@@ -8,7 +8,7 @@
 
 - **cmake** (3.26.5+)
 - **gcc/g++** (11.4.1+)
-- **python** (3.13.2+) *for graph-tool*
+- **python** (3.13.2+)
 - **conda** (24.9.2+) *for graph-tool*
 - **openmp** (201511+)
 
