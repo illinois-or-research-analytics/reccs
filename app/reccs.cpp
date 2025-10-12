@@ -6,12 +6,15 @@
 #include <filesystem>
 #include <thread>
 #include <unordered_set>
+
 #include "../lib/data_structures/graph.h"
 #include "../lib/data_structures/clustering.h"
-#include "../lib/data_structures/graph_task_queue_with_degrees.h" // Modified include
+#include "../lib/data_structures/graph_task_queue_with_degrees.h"
+
 #include "../lib/io/g_io.h"
 #include "../lib/io/cluster_io.h"
 #include "../lib/io/requirements_io.h"
+
 #include "../lib/utils/orchestrator.h"
 #include "../lib/utils/edge_extractor.h"
 #include "../lib/utils/statics.h"
