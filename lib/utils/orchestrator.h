@@ -260,10 +260,10 @@ private:
         splitter_command += " -f " + graph_filename_;
         splitter_command += " -c " + cluster_filename_;
         splitter_command += " -o " + temp_dir_;
-        splitter_command += " > " + temp_dir_ + "/logs/splitter.log 2> " + temp_dir_ + "/logs/splitter.err";
         if (verbose_) {
             splitter_command += " -v";
         }
+        splitter_command += " > " + temp_dir_ + "/logs/splitter.log 2> " + temp_dir_ + "/logs/splitter.err";
         
         std::string stats_command = "python3 extlib/stats.py";
         stats_command += " -i " + graph_filename_;
