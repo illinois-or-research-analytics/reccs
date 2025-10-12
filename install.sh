@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Initialize git submodules
+git submodule update --init --recursive
+
 # Enable conda shell support
 source "$(conda info --base)/etc/profile.d/conda.sh"
 
