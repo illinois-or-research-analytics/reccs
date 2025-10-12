@@ -47,6 +47,8 @@ void print_usage(const char* program_name) {
     std::cerr << "  -v                Verbose mode: print detailed progress information" << std::endl;
     std::cerr << "  -o <output_file>  Output file (default: 'output.tsv')" << std::endl;
     std::cerr << "  -h, --help        Show this help message and exit" << std::endl;
+    std::cerr << "  --cleanup         Clean up temporary files after execution" << std::endl;
+    std::cerr << "  --tempname <name> Use a custom temporary directory name (default: 'temp{timestamp}')" << std::endl;
     std::cerr << std::endl;
     std::cerr << "Normal mode specific options:" << std::endl;
     std::cerr << "  <edgelist.tsv>                   Input graph edgelist file" << std::endl;
@@ -139,9 +141,12 @@ int main(int argc, char** argv) {
     std::string graph_filename;
     std::string cluster_filename;
     std::string output_file = "output.tsv";
+    std::string temp_dir;
     int num_threads = std::thread::hardware_concurrency();
     bool verbose = false;
     bool checkpoint_mode = false;
+    bool cleanup = false;
+    bool tempname_provided = false;
     CheckpointArgs checkpoint_args;
     
     // Check if first argument is --checkpoint
@@ -172,6 +177,11 @@ int main(int argc, char** argv) {
             } else if (arg == "-h" || arg == "--help") {
                 print_usage(argv[0]);
                 return 0;
+            } else if (arg == "--cleanup") {
+                cleanup = true;
+            } else if (arg == "--tempname" && i + 1 < argc) {
+                tempname_provided = true;
+                temp_dir = argv[++i];
             } else {
                 std::cerr << "Unknown checkpoint option: " << arg << std::endl;
                 print_usage(argv[0]);
@@ -231,6 +241,11 @@ int main(int argc, char** argv) {
                 cluster_filename = argv[++i];
             } else if (arg == "-o" && i + 1 < argc) {
                 output_file = argv[++i];
+            } else if (arg == "--cleanup") {
+                cleanup = true;
+            } else if (arg == "--tempname" && i + 1 < argc) {
+                tempname_provided = true;
+                temp_dir = argv[++i];
             } else if (arg == "-h" || arg == "--help") {
                 print_usage(argv[0]);
                 return 0;
@@ -259,7 +274,10 @@ int main(int argc, char** argv) {
     std::string requirements_filename;
     std::string degseq_filename;
     std::string deficits_filename;
-    std::string temp_dir;
+
+    if (!tempname_provided) {
+        temp_dir = "temp" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+    }
     
     if (checkpoint_mode) {
         if (verbose) {
@@ -283,8 +301,9 @@ int main(int argc, char** argv) {
         if (verbose) {
             std::cout << "Creating temporary directory for intermediate files..." << std::endl;
         }
-        std::string temp_dir = "temp" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
-
+        if (!tempname_provided) {
+            temp_dir = "temp" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+        }
         // Remove existing temp directory if it exists
         if (fs::exists(temp_dir)) {
             fs::remove_all(temp_dir);
@@ -481,6 +500,13 @@ int main(int argc, char** argv) {
         std::cout << "\n=== PROCESSING COMPLETE ===" << std::endl;
         std::cout << "Total execution time: " << duration << " seconds" << std::endl;
         std::cout << "Output written to: " << output_file << std::endl;
+    }
+
+    if (cleanup) {
+        if (verbose) {
+            std::cout << "Cleaning up temporary files..." << std::endl;
+        }
+        fs::remove_all(temp_dir);
     }
     
     return 0;
