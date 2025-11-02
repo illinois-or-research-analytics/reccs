@@ -38,7 +38,10 @@ void match_degree_sequence_pp(GraphTask& task) {
 
     // Python: available_node_degrees dict and available_node_set
     std::unordered_map<uint32_t, uint32_t> available_node_degrees; // local_idx -> deficit
-    std::unordered_set<uint32_t> available_node_set; // local indices with budget > 0
+
+    // OPTIMIZATION: Use bitmap instead of unordered_set - can be memcpy'd!
+    std::vector<uint8_t> is_available_bitmap(g.num_nodes, 0);
+    std::vector<uint32_t> available_node_list; // For iteration
 
     // Initialize from degree deficits
     for (uint64_t global_node_id : available_nodes) {
@@ -48,7 +51,8 @@ void match_degree_sequence_pp(GraphTask& task) {
             int32_t deficit = task.get_local_available_degree(global_node_id);
             if (deficit > 0) {
                 available_node_degrees[local_idx] = static_cast<uint32_t>(deficit);
-                available_node_set.insert(local_idx);
+                is_available_bitmap[local_idx] = 1;
+                available_node_list.push_back(local_idx);
             }
         }
     }
@@ -80,7 +84,7 @@ void match_degree_sequence_pp(GraphTask& task) {
 
     // Python: degree_edges = set() - Collect edges to add in batch
     std::vector<std::pair<uint32_t, uint32_t>> degree_edges;
-    degree_edges.reserve(available_node_set.size() * 10); // Rough estimate
+    degree_edges.reserve(available_node_list.size() * 10); // Rough estimate
 
     // Python: max_heap using heapq (max heap with negative degrees)
     auto heap_comparator = [](const NodeDegree& a, const NodeDegree& b) {
@@ -98,10 +102,10 @@ void match_degree_sequence_pp(GraphTask& task) {
     uint32_t nodes_processed = 0;
     std::cout << "[Cluster " << task.cluster_id << "]: Processing " << max_heap.size() << " nodes..." << std::endl;
 
-    // CRITICAL OPTIMIZATION: Use bitmap for O(1) membership testing
-    std::vector<bool> is_neighbor(g.num_nodes, false);
+    // CRITICAL OPTIMIZATION: Use bitmaps that can be fast-copied (memcpy-able!)
+    std::vector<uint8_t> available_non_neighbors_bitmap(g.num_nodes);
     std::vector<uint32_t> available_non_neighbors_vec;
-    available_non_neighbors_vec.reserve(available_node_set.size());
+    available_non_neighbors_vec.reserve(available_node_list.size());
 
     // START TIMING: Main degree matching loop
     auto loop_start = std::chrono::high_resolution_clock::now();
@@ -119,37 +123,35 @@ void match_degree_sequence_pp(GraphTask& task) {
             continue;
         }
 
-        // Line 278-284: Build available_non_neighbors using bitmap for speed
+        // Line 278-284: MATCH PYTHON with fast bitmap copy (like memcpy!)
         // Python: available_non_neighbors = available_node_set.copy()
         //         for neighbor in neighbors: available_non_neighbors.discard(neighbor)
 
         auto neighbor_it = exist_neighbor.find(available_c_node);
         if (neighbor_it == exist_neighbor.end()) {
             available_node_degrees.erase(available_c_node);
-            available_node_set.erase(available_c_node);
+            is_available_bitmap[available_c_node] = 0;
             continue;
         }
 
         auto& neighbor_set = neighbor_it->second;
 
-        // OPTIMIZATION: Mark neighbors in bitmap (O(degree), cache-friendly)
-        is_neighbor[available_c_node] = true;  // Mark self
+        // PYTHON'S EXACT ALGORITHM with fast bitmap:
+        // 1. Copy bitmap (optimized memcpy in vector copy)
+        available_non_neighbors_bitmap = is_available_bitmap;
+
+        // 2. Erase self and neighbors
+        available_non_neighbors_bitmap[available_c_node] = 0;
         for (uint32_t neighbor : neighbor_set) {
-            is_neighbor[neighbor] = true;
+            available_non_neighbors_bitmap[neighbor] = 0;
         }
 
-        // Build non-neighbor list using bitmap (O(|available_node_set|) with O(1) lookups)
+        // 3. Build vector of available non-neighbors for pop operations
         available_non_neighbors_vec.clear();
-        for (uint32_t candidate : available_node_set) {
-            if (!is_neighbor[candidate]) {
-                available_non_neighbors_vec.push_back(candidate);
+        for (uint32_t node : available_node_list) {
+            if (available_non_neighbors_bitmap[node]) {
+                available_non_neighbors_vec.push_back(node);
             }
-        }
-
-        // Clear bitmap for next iteration (O(degree))
-        is_neighbor[available_c_node] = false;
-        for (uint32_t neighbor : neighbor_set) {
-            is_neighbor[neighbor] = false;
         }
 
         // Line 287-290: Compute avail_k
@@ -177,14 +179,14 @@ void match_degree_sequence_pp(GraphTask& task) {
             // Line 305-308: Update degree of edge_end
             available_node_degrees[edge_end]--;
             if (available_node_degrees[edge_end] == 0) {
-                available_node_set.erase(edge_end);
+                is_available_bitmap[edge_end] = 0;
                 available_node_degrees.erase(edge_end);
             }
         }
 
         // Line 311-312: Remove processed node
         available_node_degrees.erase(available_c_node);
-        available_node_set.erase(available_c_node);
+        is_available_bitmap[available_c_node] = 0;
 
         // Line 313-318: Progress logging
         nodes_processed++;
