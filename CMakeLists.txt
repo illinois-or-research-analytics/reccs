@@ -44,5 +44,9 @@ target_link_libraries(reccs PUBLIC ${RECCS_LIBRARIES})
 add_executable(reccspp app/reccspp.cpp)
 target_link_libraries(reccspp PUBLIC ${RECCS_LIBRARIES})
 
+# Add the test_degseq_matching executable for testing degree sequence matching
+add_executable(test_degseq_matching app/test_degseq_matching.cpp)
+target_link_libraries(test_degseq_matching PUBLIC ${RECCS_LIBRARIES})
+
 # Copy extlib directory to build directory
 file(COPY ${CMAKE_SOURCE_DIR}/extlib DESTINATION ${CMAKE_BINARY_DIR})

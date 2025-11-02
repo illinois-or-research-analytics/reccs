@@ -10,6 +10,9 @@
 #include <mutex>
 #include <shared_mutex>
 #include <vector>
+#include <thread>
+
+#include <nlohmann/json.hpp>
 
 #include "graph.h"
 
