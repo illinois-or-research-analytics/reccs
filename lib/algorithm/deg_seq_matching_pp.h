@@ -102,8 +102,8 @@ void match_degree_sequence_pp(GraphTask& task) {
     uint32_t nodes_processed = 0;
     std::cout << "[Cluster " << task.cluster_id << "]: Processing " << max_heap.size() << " nodes..." << std::endl;
 
-    // CRITICAL OPTIMIZATION: Use bitmaps that can be fast-copied (memcpy-able!)
-    std::vector<uint8_t> available_non_neighbors_bitmap(g.num_nodes);
+    // CRITICAL OPTIMIZATION: Use bitmap for neighbor marking (don't need to copy!)
+    std::vector<uint8_t> is_neighbor_bitmap(g.num_nodes, 0);
     std::vector<uint32_t> available_non_neighbors_vec;
     available_non_neighbors_vec.reserve(available_node_list.size());
 
@@ -136,22 +136,28 @@ void match_degree_sequence_pp(GraphTask& task) {
 
         auto& neighbor_set = neighbor_it->second;
 
-        // PYTHON'S EXACT ALGORITHM with fast bitmap:
-        // 1. Copy bitmap (optimized memcpy in vector copy)
-        available_non_neighbors_bitmap = is_available_bitmap;
+        // OPTIMIZED: Don't copy entire bitmap - just mark neighbors and check
+        // This avoids copying all g.num_nodes bytes every iteration!
 
-        // 2. Erase self and neighbors
-        available_non_neighbors_bitmap[available_c_node] = 0;
+        // 1. Mark self and neighbors in bitmap
+        is_neighbor_bitmap[available_c_node] = 1;
         for (uint32_t neighbor : neighbor_set) {
-            available_non_neighbors_bitmap[neighbor] = 0;
+            is_neighbor_bitmap[neighbor] = 1;
         }
 
-        // 3. Build vector of available non-neighbors for pop operations
+        // 2. Build vector: only iterate available_node_list (small), check two bitmaps (O(1))
         available_non_neighbors_vec.clear();
         for (uint32_t node : available_node_list) {
-            if (available_non_neighbors_bitmap[node]) {
+            // Check if available AND not a neighbor (both O(1) bitmap lookups)
+            if (is_available_bitmap[node] && !is_neighbor_bitmap[node]) {
                 available_non_neighbors_vec.push_back(node);
             }
+        }
+
+        // 3. Clear neighbor marks for next iteration
+        is_neighbor_bitmap[available_c_node] = 0;
+        for (uint32_t neighbor : neighbor_set) {
+            is_neighbor_bitmap[neighbor] = 0;
         }
 
         // Line 287-290: Compute avail_k
