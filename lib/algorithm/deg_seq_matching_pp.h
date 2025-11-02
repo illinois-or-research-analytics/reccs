@@ -43,7 +43,11 @@ void match_degree_sequence_pp(GraphTask& task) {
     // Create local deficit map for this graph
     std::unordered_map<uint32_t, uint32_t> available_node_degrees; // local_idx -> deficit
     std::unordered_set<uint32_t> available_node_set; // local indices
-    
+
+    // OPTIMIZATION: Create local budget cache to avoid repeated atomic operations
+    // Maps global_node_id -> cached_budget
+    std::unordered_map<uint64_t, int32_t> local_budget_cache;
+
     for (uint64_t global_node_id : available_nodes) {
         auto it = g.node_map.find(global_node_id);
         if (it != g.node_map.end()) {
@@ -52,6 +56,7 @@ void match_degree_sequence_pp(GraphTask& task) {
             if (deficit > 0) {
                 available_node_degrees[local_idx] = static_cast<uint32_t>(deficit);
                 available_node_set.insert(local_idx);
+                local_budget_cache[global_node_id] = deficit;  // Cache the budget
             }
         }
     }
@@ -93,17 +98,18 @@ void match_degree_sequence_pp(GraphTask& task) {
         if (available_node_set.find(available_node) == available_node_set.end()) {
             continue;
         }
-        
-        // Get current available budget for this node
-        int32_t current_budget = task.get_local_available_degree(node_global_id);
-        if (current_budget <= 0) {
+
+        // OPTIMIZATION: Use local cache instead of expensive atomic operations
+        auto cache_it = local_budget_cache.find(node_global_id);
+        if (cache_it == local_budget_cache.end() || cache_it->second <= 0) {
             available_node_set.erase(available_node);
             available_node_degrees.erase(available_node);
             continue;
         }
-        
+        int32_t current_budget = cache_it->second;
+
         uint32_t avail_degree = std::min(
-            available_node_degrees[available_node], 
+            available_node_degrees[available_node],
             static_cast<uint32_t>(current_budget)
         );
 
@@ -117,11 +123,13 @@ void match_degree_sequence_pp(GraphTask& task) {
         // Build available non-neighbors that also have budget
         std::vector<uint32_t> available_non_neighbors;
         available_non_neighbors.reserve(available_node_set.size());
-        
+
+        // OPTIMIZATION: Use local cache to check budget - avoids expensive atomic operations
         for (uint32_t candidate : available_node_set) {
             if (neighbors.find(candidate) == neighbors.end()) {
                 uint64_t candidate_global_id = g.id_map[candidate];
-                if (task.get_local_available_degree(candidate_global_id) > 0) {
+                auto candidate_cache_it = local_budget_cache.find(candidate_global_id);
+                if (candidate_cache_it != local_budget_cache.end() && candidate_cache_it->second > 0) {
                     available_non_neighbors.push_back(candidate);
                 }
             }
@@ -139,17 +147,21 @@ void match_degree_sequence_pp(GraphTask& task) {
             uint32_t edge_end = available_non_neighbors[idx];
             uint64_t edge_end_global_id = g.id_map[edge_end];
             
-            // Try to consume budget for both nodes
+            // Try to consume budget for both nodes (atomic operations with global manager)
             if (!task.consume_local_degree(node_global_id, 1)) {
                 break; // No more budget for this node
             }
-            
+
             if (!task.consume_local_degree(edge_end_global_id, 1)) {
                 // Rollback the first consumption if second fails
                 // Note: This is a simplified approach - in practice might need more sophisticated rollback
                 continue;
             }
-            
+
+            // OPTIMIZATION: Update local cache after successful consumption
+            local_budget_cache[node_global_id]--;
+            local_budget_cache[edge_end_global_id]--;
+
             // Successfully consumed budget, add the edge
             g.add_edge(available_node, edge_end);
             edges_added++;
