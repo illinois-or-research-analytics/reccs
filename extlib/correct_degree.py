@@ -266,6 +266,10 @@ nodes_processed = 0
 degree_corrected = 0
 logging.info(f'Need to process {len(max_heap)} nodes')
 subtime = time.perf_counter()
+
+# START TIMING: Main degree matching loop
+loop_start = time.perf_counter()
+
 while max_heap:
     # Get the node with the highest degree
     _, available_c_node = heapq.heappop(max_heap)
@@ -317,9 +321,18 @@ while max_heap:
                      time.perf_counter() - subtime}')
         subtime = time.perf_counter()
 
+# END TIMING: Main degree matching loop
+loop_end = time.perf_counter()
+loop_duration = loop_end - loop_start
+
+logging.info(f'======================================')
+logging.info(f'Main loop time: {loop_duration:.3f} seconds')
+logging.info(f'======================================')
+
 elapsed = time.perf_counter() - start
+logging.info(f'TOTAL (with setup): {elapsed:.3f} seconds')
 logging.info(f'Processed {nodes_processed} nodes, adding {
-             degree_corrected} edges: {elapsed}')
+             degree_corrected} edges')
 
 # ========================
 

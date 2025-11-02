@@ -1,19 +1,19 @@
 /**
  * @file test_degseq_matching.cpp
- * @brief Test script for degree sequence matching algorithm
+ * @brief Scale test for degree sequence matching algorithm
  *
  * This script tests the deg_seq_matching_pp algorithm by:
  * 1. Loading a reference graph and an SBM graph
  * 2. Computing degree deficits (reference - SBM)
- * 3. Running degree sequence matching to add edges to the SBM graph
+ * 3. Running degree sequence matching on the entire network
  * 4. Outputting the augmented graph
  *
  * Usage:
- *   ./test_degseq_matching <reference.tsv> <sbm.tsv> <clustering.tsv> <output.tsv> [options]
+ *   ./test_degseq_matching <reference.tsv> <sbm.tsv> <output.tsv> [options]
  *
  * Options:
  *   -v, --verbose    Verbose output
- *   -t <threads>     Number of threads (default: 1 for testing)
+ *   -t <threads>     Number of threads (default: 1)
  */
 
 #include <iostream>
@@ -28,7 +28,6 @@
 #include "../lib/data_structures/graph.h"
 #include "../lib/data_structures/available_node_degrees.h"
 #include "../lib/io/g_io.h"
-#include "../lib/io/cluster_io.h"
 #include "../lib/algorithm/deg_seq_matching_pp.h"
 
 #include <nlohmann/json.hpp>
@@ -146,11 +145,10 @@ void save_deficits_json(
  */
 void print_usage(const char* program_name) {
     std::cout << "Usage: " << program_name
-              << " <reference.tsv> <sbm.tsv> <clustering.tsv> <output.tsv> [options]\n\n";
+              << " <reference.tsv> <sbm.tsv> <output.tsv> [options]\n\n";
     std::cout << "Arguments:\n";
     std::cout << "  reference.tsv   Reference graph edgelist (TSV format)\n";
     std::cout << "  sbm.tsv         SBM graph edgelist to augment (TSV format)\n";
-    std::cout << "  clustering.tsv  Node clustering file (TSV format: node_id<TAB>cluster_id)\n";
     std::cout << "  output.tsv      Output augmented graph (TSV format)\n\n";
     std::cout << "Options:\n";
     std::cout << "  -v, --verbose   Enable verbose output\n";
@@ -161,22 +159,21 @@ void print_usage(const char* program_name) {
 
 int main(int argc, char* argv[]) {
     // Parse arguments
-    if (argc < 5) {
+    if (argc < 4) {
         print_usage(argv[0]);
         return 1;
     }
 
     std::string reference_file = argv[1];
     std::string sbm_file = argv[2];
-    std::string clustering_file = argv[3];
-    std::string output_file = argv[4];
+    std::string output_file = argv[3];
 
     bool verbose = false;
     int num_threads = 1;
     std::string deficits_output = "";
 
     // Parse options
-    for (int i = 5; i < argc; ++i) {
+    for (int i = 4; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "-v" || arg == "--verbose") {
             verbose = true;
@@ -200,10 +197,9 @@ int main(int argc, char* argv[]) {
     auto start_time = std::chrono::high_resolution_clock::now();
 
     if (verbose) {
-        std::cout << "\n=== Degree Sequence Matching Test ===\n";
+        std::cout << "\n=== Degree Sequence Matching Scale Test ===\n";
         std::cout << "Reference graph: " << reference_file << "\n";
         std::cout << "SBM graph: " << sbm_file << "\n";
-        std::cout << "Clustering: " << clustering_file << "\n";
         std::cout << "Output: " << output_file << "\n";
         std::cout << "Threads: " << num_threads << "\n";
     }
@@ -228,16 +224,6 @@ int main(int argc, char* argv[]) {
     if (verbose) {
         std::cout << "SBM graph loaded: " << sbm_graph.num_nodes << " nodes, "
                   << sbm_graph.num_edges / 2 << " edges\n";
-    }
-
-    // Load clustering
-    if (verbose) {
-        std::cout << "\n=== Loading Clustering ===\n";
-    }
-    Clustering clustering = load_clustering(clustering_file, sbm_graph, verbose);
-
-    if (verbose) {
-        std::cout << "Clustering loaded: " << clustering.cluster_nodes.size() << " clusters\n";
     }
 
     // Compute degree deficits
@@ -270,16 +256,19 @@ int main(int argc, char* argv[]) {
         std::cout << "Average budget per node: " << stats.avg_available_degree << "\n";
     }
 
-    // Process the graph as a single cluster for simplicity
-    // (In production, would process each cluster separately)
+    // Run degree sequence matching on the entire network
     if (verbose) {
-        std::cout << "\n=== Running Degree Sequence Matching ===\n";
+        std::cout << "\n=== Running Degree Sequence Matching on Entire Network ===\n";
     }
 
-    // Collect all nodes as a single "cluster"
+    // Collect all nodes
     std::unordered_set<uint64_t> all_node_ids;
     for (uint32_t node = 0; node < sbm_graph.num_nodes; ++node) {
         all_node_ids.insert(sbm_graph.id_map[node]);
+    }
+
+    if (verbose) {
+        std::cout << "Processing " << all_node_ids.size() << " nodes as single network\n";
     }
 
     // Create a shared pointer to the SBM graph

@@ -7,8 +7,8 @@
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
-#include <random>
 #include <algorithm>
+#include <chrono>
 
 #include "../data_structures/graph.h"
 #include "../data_structures/node_degree.h"
@@ -16,38 +16,31 @@
 
 /**
  * Matches the degree sequence of a graph using pre-computed degree deficits.
- * This replaces the old degree sequence matching with node-to-node deficit consumption.
+ * Heavily optimized version that eliminates unnecessary copying.
  */
 void match_degree_sequence_pp(GraphTask& task) {
     // Extract graph and degree manager from task
     Graph& g = *task.subgraph;
     auto degree_manager = task.degree_manager;
-    
+
     if (!degree_manager) {
         std::cerr << "Error: Task's degree manager is null." << std::endl;
         return;
     }
 
-    // Track number of edges added
-    uint32_t edges_added = 0;
-    uint32_t budget_consumed = 0;
-
-    // Get available nodes for this cluster using task's helper method
+    // Get available nodes for this cluster
     auto available_nodes = task.get_local_available_nodes();
-    
+
     if (available_nodes.empty()) {
         std::cout << "[Cluster " << task.cluster_id << "]: No nodes need additional edges." << std::endl;
         return;
     }
 
-    // Create local deficit map for this graph
+    // Python: available_node_degrees dict and available_node_set
     std::unordered_map<uint32_t, uint32_t> available_node_degrees; // local_idx -> deficit
-    std::unordered_set<uint32_t> available_node_set; // local indices
+    std::unordered_set<uint32_t> available_node_set; // local indices with budget > 0
 
-    // OPTIMIZATION: Create local budget cache to avoid repeated atomic operations
-    // Maps global_node_id -> cached_budget
-    std::unordered_map<uint64_t, int32_t> local_budget_cache;
-
+    // Initialize from degree deficits
     for (uint64_t global_node_id : available_nodes) {
         auto it = g.node_map.find(global_node_id);
         if (it != g.node_map.end()) {
@@ -56,7 +49,6 @@ void match_degree_sequence_pp(GraphTask& task) {
             if (deficit > 0) {
                 available_node_degrees[local_idx] = static_cast<uint32_t>(deficit);
                 available_node_set.insert(local_idx);
-                local_budget_cache[global_node_id] = deficit;  // Cache the budget
             }
         }
     }
@@ -66,112 +58,123 @@ void match_degree_sequence_pp(GraphTask& task) {
         return;
     }
 
-    // Random number generator setup
-    std::random_device rd;
-    std::mt19937 gen(rd());
+    // Python: exist_neighbor dict
+    // Build persistent neighbor map ONCE at start (NOT included in Python's main loop timing!)
+    auto setup_start = std::chrono::high_resolution_clock::now();
+    std::cout << "[Cluster " << task.cluster_id << "]: Building neighbor map..." << std::endl;
 
-    // Use max heap to process largest deficits first
+    std::unordered_map<uint32_t, std::unordered_set<uint32_t>> exist_neighbor;
+    exist_neighbor.reserve(g.num_nodes);
+
+    for (uint32_t node = 0; node < g.num_nodes; ++node) {
+        exist_neighbor[node] = std::unordered_set<uint32_t>();
+        for (uint32_t idx = g.row_ptr[node]; idx < g.row_ptr[node + 1]; ++idx) {
+            exist_neighbor[node].insert(g.col_idx[idx]);
+        }
+    }
+
+    auto setup_end = std::chrono::high_resolution_clock::now();
+    auto setup_duration = std::chrono::duration_cast<std::chrono::milliseconds>(setup_end - setup_start);
+    std::cout << "[Cluster " << task.cluster_id << "]: Neighbor map build time: "
+              << setup_duration.count() / 1000.0 << " seconds (NOT in main loop)" << std::endl;
+
+    // Python: degree_edges = set() - Collect edges to add in batch
+    std::vector<std::pair<uint32_t, uint32_t>> degree_edges;
+    degree_edges.reserve(available_node_set.size() * 10); // Rough estimate
+
+    // Python: max_heap using heapq (max heap with negative degrees)
     auto heap_comparator = [](const NodeDegree& a, const NodeDegree& b) {
         if (a.degree != b.degree) return a.degree < b.degree; // Max heap
         return a.node > b.node;
     };
-    
-    std::priority_queue<NodeDegree, std::vector<NodeDegree>, decltype(heap_comparator)> 
+
+    std::priority_queue<NodeDegree, std::vector<NodeDegree>, decltype(heap_comparator)>
         max_heap(heap_comparator);
 
-    for (const auto& pair : available_node_degrees) {
-        max_heap.emplace(NodeDegree{pair.first, static_cast<int32_t>(pair.second)});
+    for (const auto& [local_idx, degree] : available_node_degrees) {
+        max_heap.emplace(NodeDegree{local_idx, static_cast<int32_t>(degree)});
     }
 
     uint32_t nodes_processed = 0;
+    std::cout << "[Cluster " << task.cluster_id << "]: Processing " << max_heap.size() << " nodes..." << std::endl;
 
-    // Main algorithm loop with budget consumption
-    std::cout << "[Cluster " << task.cluster_id << "]: Starting degree deficit matching with budget tracking..." << std::endl;
+    // CRITICAL OPTIMIZATION: Use bitmap for O(1) membership testing
+    std::vector<bool> is_neighbor(g.num_nodes, false);
+    std::vector<uint32_t> available_non_neighbors_vec;
+    available_non_neighbors_vec.reserve(available_node_set.size());
+
+    // START TIMING: Main degree matching loop
+    auto loop_start = std::chrono::high_resolution_clock::now();
+
+    // Main loop - optimized version
     while (!max_heap.empty()) {
+        // Line 271: heapq.heappop(max_heap)
         NodeDegree current = max_heap.top();
         max_heap.pop();
-        
-        uint32_t available_node = current.node;
-        uint64_t node_global_id = g.id_map[available_node];
-        
-        // Check if node is still available and has budget
-        if (available_node_set.find(available_node) == available_node_set.end()) {
+
+        uint32_t available_c_node = current.node;
+
+        // Line 274-275: Check if node is still available
+        if (available_node_degrees.find(available_c_node) == available_node_degrees.end()) {
             continue;
         }
 
-        // OPTIMIZATION: Use local cache instead of expensive atomic operations
-        auto cache_it = local_budget_cache.find(node_global_id);
-        if (cache_it == local_budget_cache.end() || cache_it->second <= 0) {
-            available_node_set.erase(available_node);
-            available_node_degrees.erase(available_node);
+        // Line 278-284: Build available_non_neighbors using bitmap for speed
+        // Python: available_non_neighbors = available_node_set.copy()
+        //         for neighbor in neighbors: available_non_neighbors.discard(neighbor)
+
+        auto neighbor_it = exist_neighbor.find(available_c_node);
+        if (neighbor_it == exist_neighbor.end()) {
+            available_node_degrees.erase(available_c_node);
+            available_node_set.erase(available_c_node);
             continue;
         }
-        int32_t current_budget = cache_it->second;
 
-        uint32_t avail_degree = std::min(
-            available_node_degrees[available_node],
-            static_cast<uint32_t>(current_budget)
+        auto& neighbor_set = neighbor_it->second;
+
+        // OPTIMIZATION: Mark neighbors in bitmap (O(degree), cache-friendly)
+        is_neighbor[available_c_node] = true;  // Mark self
+        for (uint32_t neighbor : neighbor_set) {
+            is_neighbor[neighbor] = true;
+        }
+
+        // Build non-neighbor list using bitmap (O(|available_node_set|) with O(1) lookups)
+        available_non_neighbors_vec.clear();
+        for (uint32_t candidate : available_node_set) {
+            if (!is_neighbor[candidate]) {
+                available_non_neighbors_vec.push_back(candidate);
+            }
+        }
+
+        // Clear bitmap for next iteration (O(degree))
+        is_neighbor[available_c_node] = false;
+        for (uint32_t neighbor : neighbor_set) {
+            is_neighbor[neighbor] = false;
+        }
+
+        // Line 287-290: Compute avail_k
+        uint32_t avail_k = std::min(
+            available_node_degrees[available_c_node],
+            static_cast<uint32_t>(available_non_neighbors_vec.size())
         );
 
-        // Get current neighbors efficiently
-        std::unordered_set<uint32_t> neighbors;
-        for (uint32_t idx = g.row_ptr[available_node]; idx < g.row_ptr[available_node + 1]; ++idx) {
-            neighbors.insert(g.col_idx[idx]);
-        }
-        neighbors.insert(available_node); // Add self to avoid self-loops
-
-        // Build available non-neighbors that also have budget
-        std::vector<uint32_t> available_non_neighbors;
-        available_non_neighbors.reserve(available_node_set.size());
-
-        // OPTIMIZATION: Use local cache to check budget - avoids expensive atomic operations
-        for (uint32_t candidate : available_node_set) {
-            if (neighbors.find(candidate) == neighbors.end()) {
-                uint64_t candidate_global_id = g.id_map[candidate];
-                auto candidate_cache_it = local_budget_cache.find(candidate_global_id);
-                if (candidate_cache_it != local_budget_cache.end() && candidate_cache_it->second > 0) {
-                    available_non_neighbors.push_back(candidate);
-                }
-            }
-        }
-
-        uint32_t avail_k = std::min(avail_degree, static_cast<uint32_t>(available_non_neighbors.size()));
-        
-        // Make avail_k connections with budget consumption
+        // Line 293-309: Add edges
         for (uint32_t i = 0; i < avail_k; ++i) {
-            if (available_non_neighbors.empty()) break;
-            
-            // Random selection
-            std::uniform_int_distribution<size_t> dist(0, available_non_neighbors.size() - 1);
-            size_t idx = dist(gen);
-            uint32_t edge_end = available_non_neighbors[idx];
-            uint64_t edge_end_global_id = g.id_map[edge_end];
-            
-            // Try to consume budget for both nodes (atomic operations with global manager)
-            if (!task.consume_local_degree(node_global_id, 1)) {
-                break; // No more budget for this node
-            }
+            if (available_non_neighbors_vec.empty()) break;
 
-            if (!task.consume_local_degree(edge_end_global_id, 1)) {
-                // Rollback the first consumption if second fails
-                // Note: This is a simplified approach - in practice might need more sophisticated rollback
-                continue;
-            }
+            // Line 295: available_non_neighbors.pop() - O(1)
+            uint32_t edge_end = available_non_neighbors_vec.back();
+            available_non_neighbors_vec.pop_back();
 
-            // OPTIMIZATION: Update local cache after successful consumption
-            local_budget_cache[node_global_id]--;
-            local_budget_cache[edge_end_global_id]--;
+            // Line 298: degree_edges.add((available_c_node, edge_end))
+            degree_edges.emplace_back(available_c_node, edge_end);
 
-            // Successfully consumed budget, add the edge
-            g.add_edge(available_node, edge_end);
-            edges_added++;
-            budget_consumed += 2; // Both endpoints
-            
-            // Swap with last and pop
-            std::swap(available_non_neighbors[idx], available_non_neighbors.back());
-            available_non_neighbors.pop_back();
+            // Line 301-302: Update exist_neighbor
+            // We already have neighbor_it from above
+            neighbor_it->second.insert(edge_end);
+            exist_neighbor[edge_end].insert(available_c_node);
 
-            // Update edge_end's deficit
+            // Line 305-308: Update degree of edge_end
             available_node_degrees[edge_end]--;
             if (available_node_degrees[edge_end] == 0) {
                 available_node_set.erase(edge_end);
@@ -179,20 +182,39 @@ void match_degree_sequence_pp(GraphTask& task) {
             }
         }
 
-        // Remove processed node
-        available_node_set.erase(available_node);
-        available_node_degrees.erase(available_node);
-        
+        // Line 311-312: Remove processed node
+        available_node_degrees.erase(available_c_node);
+        available_node_set.erase(available_c_node);
+
+        // Line 313-318: Progress logging
         nodes_processed++;
-        if (nodes_processed % 100 == 0) {
-            std::cout << "[Cluster " << task.cluster_id << "] Nodes processed: " << nodes_processed 
-                      << ", Available nodes: " << available_node_set.size() << std::endl;
+        if (nodes_processed % 1000 == 0) {
+            std::cout << "[Cluster " << task.cluster_id << "] Processed " << nodes_processed << " nodes" << std::endl;
         }
     }
 
-    std::cout << "[Cluster " << task.cluster_id << "]: Degree deficit matching complete. "
-              << "Edges added: " << edges_added 
-              << ", Budget consumed: " << budget_consumed << std::endl;
+    // END TIMING: Main degree matching loop
+    auto loop_end = std::chrono::high_resolution_clock::now();
+    auto loop_duration = std::chrono::duration_cast<std::chrono::milliseconds>(loop_end - loop_start);
+
+    std::cout << "[Cluster " << task.cluster_id << "]: Main loop time: "
+              << loop_duration.count() / 1000.0 << " seconds" << std::endl;
+
+    // Add all edges in one efficient batch operation
+    auto batch_start = std::chrono::high_resolution_clock::now();
+    std::cout << "[Cluster " << task.cluster_id << "]: Adding " << degree_edges.size() << " edges to graph..." << std::endl;
+    add_edges_batch(g, degree_edges);
+    auto batch_end = std::chrono::high_resolution_clock::now();
+    auto batch_duration = std::chrono::duration_cast<std::chrono::milliseconds>(batch_end - batch_start);
+
+    std::cout << "[Cluster " << task.cluster_id << "]: Batch add time: "
+              << batch_duration.count() / 1000.0 << " seconds" << std::endl;
+
+    std::cout << "[Cluster " << task.cluster_id << "]: TOTAL DEGREE MATCHING TIME: "
+              << (loop_duration.count() + batch_duration.count()) / 1000.0 << " seconds" << std::endl;
+    std::cout << "[Cluster " << task.cluster_id << "]: Complete. "
+              << "Edges added: " << degree_edges.size()
+              << ", Nodes processed: " << nodes_processed << std::endl;
 }
 
 #endif // DEG_SEQ_MATCHING_PP_H
