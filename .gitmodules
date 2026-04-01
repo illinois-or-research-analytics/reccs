@@ -7,3 +7,9 @@
 [submodule "extlib/pcg-cpp"]
 	path = extlib/pcg-cpp
 	url = https://github.com/imneme/pcg-cpp.git
+[submodule "baselines/ec-sbm"]
+	path = baselines/ec-sbm
+	url = http://github.com/illinois-or-research-analytics/ec-sbm
+[submodule "baselines/snap_kronfit"]
+	path = baselines/snap_kronfit
+	url = https://github.com/snap-stanford/snap.git
