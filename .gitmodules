@@ -13,3 +13,6 @@
 [submodule "baselines/snap_kronfit"]
 	path = baselines/snap_kronfit
 	url = https://github.com/snap-stanford/snap.git
+[submodule "baselines/reccs-orig"]
+	path = baselines/reccs-orig
+	url = https://github.com/vikramr2/reccs-orig.git
