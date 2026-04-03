@@ -24,10 +24,12 @@ public:
      * @param temp_dir Directory for temporary files
      * @param verbose Whether to print verbose output
      */
-    Orchestrator(const std::string& graph_filename, const std::string& cluster_filename, 
-                const std::string& temp_dir, bool verbose)
-        : graph_filename_(graph_filename), cluster_filename_(cluster_filename), 
-          temp_dir_(temp_dir), verbose_(verbose) {
+    Orchestrator(const std::string& graph_filename, const std::string& cluster_filename,
+                const std::string& temp_dir, bool verbose,
+                bool no_parallel_procs = false, bool orig_sbm = false)
+        : graph_filename_(graph_filename), cluster_filename_(cluster_filename),
+          temp_dir_(temp_dir), verbose_(verbose),
+          no_parallel_procs_(no_parallel_procs), orig_sbm_(orig_sbm) {
         // Ensure temp directory exists
         if (!std::filesystem::exists(temp_dir_)) {
             std::filesystem::create_directories(temp_dir_);
@@ -110,6 +112,8 @@ private:
     std::string cluster_filename_;
     std::string temp_dir_;
     bool verbose_;
+    bool no_parallel_procs_;
+    bool orig_sbm_;
     
     // Paths for intermediate files
     std::string clustered_edges_;
@@ -273,37 +277,62 @@ private:
             stats_command += " -v";
         }
         
-        // Execute commands in parallel
+        // Execute splitter first (always needed before stats and next stage)
         pid_t splitter_pid = executeCommand(splitter_command, "Splitter");
         if (splitter_pid < 0) {
             std::cerr << "Error: Failed to fork for splitter process" << std::endl;
             return false;
         }
-        
+        pids_.push_back({splitter_pid, "Splitter"});
+
+        // Wait for splitter immediately if serial mode, otherwise launch stats in parallel
+        if (no_parallel_procs_) {
+            if (verbose_) {
+                std::cout << "[--no-parallel-procs] Waiting for Splitter before launching Stats..." << std::endl;
+            }
+            int splitter_status;
+            waitpid(splitter_pid, &splitter_status, 0);
+            if (WEXITSTATUS(splitter_status) != 0) {
+                std::cerr << "Error: Splitter process failed with status " << WEXITSTATUS(splitter_status) << std::endl;
+                return false;
+            }
+            auto it = std::find_if(pids_.begin(), pids_.end(),
+                                 [splitter_pid](const auto& pair) { return pair.first == splitter_pid; });
+            if (it != pids_.end()) pids_.erase(it);
+        }
+
         pid_t stats_pid = executeCommand(stats_command, "Stats");
         if (stats_pid < 0) {
             std::cerr << "Error: Failed to fork for stats process" << std::endl;
             return false;
         }
-        
-        // Store both PIDs with descriptions
-        pids_.push_back({splitter_pid, "Splitter"});
         pids_.push_back({stats_pid, "Stats"});
-        
-        // Wait for the splitter process to complete (we need its output for the next stage)
-        int splitter_status;
-        waitpid(splitter_pid, &splitter_status, 0);
-        
-        if (WEXITSTATUS(splitter_status) != 0) {
-            std::cerr << "Error: Splitter process failed with status " << WEXITSTATUS(splitter_status) << std::endl;
-            return false;
-        }
-        
-        // Remove splitter PID from the pending list as we already waited for it
-        auto it = std::find_if(pids_.begin(), pids_.end(), 
-                             [splitter_pid](const auto& pair) { return pair.first == splitter_pid; });
-        if (it != pids_.end()) {
-            pids_.erase(it);
+
+        if (no_parallel_procs_) {
+            // Stats must finish before we move on
+            if (verbose_) {
+                std::cout << "[--no-parallel-procs] Waiting for Stats..." << std::endl;
+            }
+            int stats_status;
+            waitpid(stats_pid, &stats_status, 0);
+            if (WEXITSTATUS(stats_status) != 0) {
+                std::cerr << "Error: Stats process failed with status " << WEXITSTATUS(stats_status) << std::endl;
+                return false;
+            }
+            auto it = std::find_if(pids_.begin(), pids_.end(),
+                                 [stats_pid](const auto& pair) { return pair.first == stats_pid; });
+            if (it != pids_.end()) pids_.erase(it);
+        } else {
+            // Parallel mode: wait for splitter now (needed for next stage), stats can keep running
+            int splitter_status;
+            waitpid(splitter_pid, &splitter_status, 0);
+            if (WEXITSTATUS(splitter_status) != 0) {
+                std::cerr << "Error: Splitter process failed with status " << WEXITSTATUS(splitter_status) << std::endl;
+                return false;
+            }
+            auto it = std::find_if(pids_.begin(), pids_.end(),
+                                 [splitter_pid](const auto& pair) { return pair.first == splitter_pid; });
+            if (it != pids_.end()) pids_.erase(it);
         }
         
         // Define paths to output files from the splitter
@@ -329,9 +358,15 @@ private:
      * 
      * @return bool true if successful, false otherwise
      */
-    bool runSecondStage() {        
-        std::string sbm_script = "extlib/gen_SBM.py";
-        
+    bool runSecondStage() {
+        std::string sbm_script = orig_sbm_
+            ? "baselines/reccs-orig/generate_synthetic_networks/gen_SBM.py"
+            : "extlib/gen_SBM.py";
+
+        if (verbose_) {
+            std::cout << "Using SBM script: " << sbm_script << std::endl;
+        }
+
         std::string sbm_clustered_command = "python3 " + sbm_script;
         sbm_clustered_command += " -f " + clustered_edges_;
         sbm_clustered_command += " -c " + clustered_clusters_;
@@ -346,24 +381,29 @@ private:
             sbm_clustered_command += " -v";
             sbm_unclustered_command += " -v";
         }
-        
-        // Execute all three commands in parallel
+
         pid_t clustered_sbm_pid = executeCommand(sbm_clustered_command, "SBM-Clustered");
         if (clustered_sbm_pid < 0) {
             std::cerr << "Error: Failed to fork for clustered SBM process" << std::endl;
             return false;
         }
-        
+        pids_.push_back({clustered_sbm_pid, "SBM-Clustered"});
+
+        if (no_parallel_procs_) {
+            // Wait for clustered SBM before launching unclustered
+            if (verbose_) {
+                std::cout << "[--no-parallel-procs] Waiting for SBM-Clustered before launching SBM-Unclustered..." << std::endl;
+            }
+            if (!waitForStageProcesses({"SBM-Clustered"})) return false;
+        }
+
         pid_t unclustered_sbm_pid = executeCommand(sbm_unclustered_command, "SBM-Unclustered");
         if (unclustered_sbm_pid < 0) {
             std::cerr << "Error: Failed to fork for unclustered SBM process" << std::endl;
             return false;
         }
-        
-        // Store PIDs with descriptions
-        pids_.push_back({clustered_sbm_pid, "SBM-Clustered"});
         pids_.push_back({unclustered_sbm_pid, "SBM-Unclustered"});
-        
+
         return waitForStageProcesses({"SBM-Clustered", "SBM-Unclustered"});
     }
 
@@ -398,6 +438,13 @@ private:
 
         // Store PID with description
         pids_.push_back({deficit_pid, "DegreeDeficits"});
+
+        if (no_parallel_procs_) {
+            if (verbose_) {
+                std::cout << "[--no-parallel-procs] Waiting for DegreeDeficits..." << std::endl;
+            }
+            return waitForStageProcesses({"DegreeDeficits"});
+        }
 
         return true;
     }

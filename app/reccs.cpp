@@ -49,6 +49,8 @@ void print_usage(const char* program_name) {
     std::cerr << "  --v2                Use V2 degree sequence fitting with SBM." << std::endl;
     std::cerr << "  --cleanup           Clean up temporary files after execution" << std::endl;
     std::cerr << "  --tempname <name>   Use a custom temporary directory name (default: 'temp{timestamp}')" << std::endl;
+    std::cerr << "  --no-parallel-procs Run orchestrator subprocesses sequentially (ablation)" << std::endl;
+    std::cerr << "  --orig-sbm          Use original (unoptimized) SBM script (ablation)" << std::endl;
     std::cerr << std::endl;
     std::cerr << "Normal mode specific options:" << std::endl;
     std::cerr << "  <edgelist.tsv>                   Input graph edgelist file (used as empirical graph)" << std::endl;
@@ -141,6 +143,8 @@ int main(int argc, char** argv) {
     bool use_v2 = false;
     bool cleanup = false; // Cleanup temporary files after execution
     bool tempname_provided = false;
+    bool no_parallel_procs = false;
+    bool orig_sbm = false;
     CheckpointArgs checkpoint_args;
     
     // Check if first argument is --checkpoint
@@ -180,6 +184,10 @@ int main(int argc, char** argv) {
             } else if (arg == "--tempname" && i + 1 < argc) {
                 tempname_provided = true;
                 temp_dir = argv[++i];
+            } else if (arg == "--no-parallel-procs") {
+                no_parallel_procs = true;
+            } else if (arg == "--orig-sbm") {
+                orig_sbm = true;
             } else {
                 std::cerr << "Unknown checkpoint option: " << arg << std::endl;
                 print_usage(argv[0]);
@@ -256,6 +264,10 @@ int main(int argc, char** argv) {
             } else if (arg == "--tempname" && i + 1 < argc) {
                 tempname_provided = true;
                 temp_dir = argv[++i];
+            } else if (arg == "--no-parallel-procs") {
+                no_parallel_procs = true;
+            } else if (arg == "--orig-sbm") {
+                orig_sbm = true;
             } else {
                 std::cerr << "Unknown option: " << arg << std::endl;
                 print_usage(argv[0]);
@@ -312,7 +324,7 @@ int main(int argc, char** argv) {
 
         fs::create_directories(temp_dir);
         
-        Orchestrator orchestrator(graph_filename, cluster_filename, temp_dir, verbose);
+        Orchestrator orchestrator(graph_filename, cluster_filename, temp_dir, verbose, no_parallel_procs, orig_sbm);
         int result = orchestrator.run();
         
         if (result != 0) {
