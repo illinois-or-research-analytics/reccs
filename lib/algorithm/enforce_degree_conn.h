@@ -15,8 +15,8 @@
 
 #include "pcg_random.hpp"
 
-// Helper: Find connected components using BFS
-std::vector<std::vector<uint32_t>> find_connected_components(const Graph& g) {
+// Helper: Find connected components using BFS (internal to enforce_degree_conn)
+std::vector<std::vector<uint32_t>> find_connected_components_degconn(const Graph& g) {
     std::vector<bool> visited(g.num_nodes, false);
     std::vector<std::vector<uint32_t>> components;
     
@@ -124,7 +124,7 @@ void enforce_degree_and_connectivity(GraphTask& task) {
     
     bool timeout_reached = false;
     
-    auto components = find_connected_components(g);
+    auto components = find_connected_components_degconn(g);
     
     std::cout << "[Cluster " << task.cluster_id << "] Found " << components.size() 
               << " connected components" << std::endl;

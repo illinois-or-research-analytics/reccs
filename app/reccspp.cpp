@@ -25,8 +25,11 @@
 #include "../lib/utils/statics.h"
 
 #include "../lib/algorithm/enforce_degree_conn.h"
+#include "../lib/algorithm/enforce_min_degree.h"
+#include "../lib/algorithm/enforce_connectivity.h"
 #include "../lib/algorithm/enforce_mincut.h"
 #include "../lib/algorithm/deg_seq_matching_pp.h"
+#include "../lib/algorithm/deg_seq_matching_v1.h"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -51,6 +54,8 @@ void print_usage(const char* program_name) {
     std::cerr << "  --tempname <name> Use a custom temporary directory name (default: 'temp{timestamp}')" << std::endl;
     std::cerr << "  --no-parallel-procs Run orchestrator subprocesses sequentially (ablation)" << std::endl;
     std::cerr << "  --orig-sbm          Use original (unoptimized) SBM script (ablation)" << std::endl;
+    std::cerr << "  --no-merge          Use separate min-degree and connectivity stages (ablation)" << std::endl;
+    std::cerr << "  --no-degseq-pp      Use whole-graph V1 degree sequence matching instead of per-cluster (ablation)" << std::endl;
     std::cerr << std::endl;
     std::cerr << "Normal mode specific options:" << std::endl;
     std::cerr << "  <edgelist.tsv>                   Input graph edgelist file" << std::endl;
@@ -151,6 +156,8 @@ int main(int argc, char** argv) {
     bool tempname_provided = false;
     bool no_parallel_procs = false;
     bool orig_sbm = false;
+    bool no_merge = false;
+    bool no_degseq_pp = false;
     CheckpointArgs checkpoint_args;
     
     // Check if first argument is --checkpoint
@@ -190,6 +197,10 @@ int main(int argc, char** argv) {
                 no_parallel_procs = true;
             } else if (arg == "--orig-sbm") {
                 orig_sbm = true;
+            } else if (arg == "--no-merge") {
+                no_merge = true;
+            } else if (arg == "--no-degseq-pp") {
+                no_degseq_pp = true;
             } else {
                 std::cerr << "Unknown checkpoint option: " << arg << std::endl;
                 print_usage(argv[0]);
@@ -258,6 +269,10 @@ int main(int argc, char** argv) {
                 no_parallel_procs = true;
             } else if (arg == "--orig-sbm") {
                 orig_sbm = true;
+            } else if (arg == "--no-merge") {
+                no_merge = true;
+            } else if (arg == "--no-degseq-pp") {
+                no_degseq_pp = true;
             } else if (arg == "-h" || arg == "--help") {
                 print_usage(argv[0]);
                 return 0;
@@ -433,16 +448,25 @@ int main(int argc, char** argv) {
     }
 
     // Set degree-aware task functions
+    auto stage1_fn = no_merge
+        ? std::function<void(GraphTask&)>([](GraphTask& task) {
+              enforce_min_degree(task);
+              enforce_connectivity(task);
+          })
+        : std::function<void(GraphTask&)>([](GraphTask& task) {
+              enforce_degree_and_connectivity(task);
+          });
+
+    auto stage3_fn = no_degseq_pp
+        ? std::function<void(GraphTask&)>([](GraphTask& /*task*/) { /* no-op: V1 matching runs post-hoc */ })
+        : std::function<void(GraphTask&)>([](GraphTask& task) {
+              match_degree_sequence_pp(task);
+          });
+
     task_queue.set_task_functions(
-        [](GraphTask& task) {
-            enforce_degree_and_connectivity(task);
-        },
-        [](GraphTask& task) {
-            enforce_mincut(task);
-        },
-        [](GraphTask& task) {
-            match_degree_sequence_pp(task);
-        }
+        stage1_fn,
+        [](GraphTask& task) { enforce_mincut(task); },
+        stage3_fn
     );
 
     task_queue.initialize_queue(clustered_sbm_graph, clustering, requirements_loader);
@@ -467,43 +491,75 @@ int main(int argc, char** argv) {
         std::cout << "Processed " << completed_subgraphs.size() << " subgraphs." << std::endl;
     }
 
-    // Output the added edges to a TSV file
-    std::string added_edges_path;
-    if (checkpoint_mode) {
-        // In checkpoint mode, create a temp file for added edges
-        added_edges_path = "temp_added_edges_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ".tsv";
+    if (no_degseq_pp) {
+        // --no-degseq-pp path: mirror reccs.cpp output assembly using whole-graph V1 matching
+
+        // Apply newly added edges (from stage1+stage2) to the in-memory graph
+        auto newly_added_edges_raw = EdgeExtractor::find_newly_added_edges(
+            clustered_sbm_graph, completed_subgraphs);
+        auto newly_added_edges = EdgeExtractor::get_compressed_newly_added_edges(
+            clustered_sbm_graph, newly_added_edges_raw, verbose);
+        add_edges_batch(clustered_sbm_graph, newly_added_edges);
+
+        std::string temp_clustered_path = temp_dir + "/temp_clustered_modified.tsv";
+        std::string clustered_subgraph_path = temp_dir + "/non_singleton_edges.tsv";
+        std::string clustered_clusters_path = temp_dir + "/non_singleton_clusters.tsv";
+
+        if (verbose) {
+            std::cout << "\nPerforming whole-graph V1 degree sequence matching (--no-degseq-pp)..." << std::endl;
+        }
+        match_degree_sequence_v1(
+            clustered_sbm_graph,
+            clustered_subgraph_path,
+            clustered_clusters_path,
+            temp_dir + "/v1_output/",
+            temp_clustered_path);
+
+        if (verbose) {
+            std::cout << "Concatenating modified clustered and unclustered SBM graphs to: " << output_file << std::endl;
+        }
+
+        std::ofstream output_stream(output_file);
+        std::ifstream clustered_in(temp_clustered_path);
+        output_stream << clustered_in.rdbuf();
+        clustered_in.close();
+        std::ifstream unclustered_in(unclustered_sbm_graph_path);
+        output_stream << unclustered_in.rdbuf();
+        unclustered_in.close();
+        output_stream.close();
+
     } else {
-        // Use temp directory from orchestrator
-        std::string temp_dir = fs::path(clustered_sbm_graph_path).parent_path().parent_path();
-        added_edges_path = temp_dir + "/added_edges.tsv";
-    }
-    
-    // Extract newly added edges
-    auto newly_added_edges = EdgeExtractor::find_newly_added_edges(
-        clustered_sbm_graph, completed_subgraphs);
-    EdgeExtractor::write_edges_to_tsv_no_header(newly_added_edges, added_edges_path);
+        // Standard reccspp path: write added edges and concatenate 3 files
 
-    if (verbose) {
-        std::cout << "Wrote newly added edges to: " << added_edges_path << std::endl;
-    }
+        std::string added_edges_path;
+        if (checkpoint_mode) {
+            added_edges_path = "temp_added_edges_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ".tsv";
+        } else {
+            added_edges_path = temp_dir + "/added_edges.tsv";
+        }
 
-    // Concatenate the clustered and unclustered SBM graphs, and the added edges
-    std::ofstream output_stream(output_file);
+        auto newly_added_edges = EdgeExtractor::find_newly_added_edges(
+            clustered_sbm_graph, completed_subgraphs);
+        EdgeExtractor::write_edges_to_tsv_no_header(newly_added_edges, added_edges_path);
 
-    // Just dump all files into output
-    for (const std::string& file : {clustered_sbm_graph_path, unclustered_sbm_graph_path, added_edges_path}) {
-        std::ifstream in(file);
-        output_stream << in.rdbuf();
-    }
+        if (verbose) {
+            std::cout << "Wrote newly added edges to: " << added_edges_path << std::endl;
+        }
 
-    if (verbose) {
-        std::cout << "Concatenated clustered and unclustered SBM graphs, and added edges into: " 
-                  << output_file << std::endl;
-    }
+        std::ofstream output_stream(output_file);
+        for (const std::string& file : {clustered_sbm_graph_path, unclustered_sbm_graph_path, added_edges_path}) {
+            std::ifstream in(file);
+            output_stream << in.rdbuf();
+        }
 
-    // Clean up temporary added_edges file if in checkpoint mode
-    if (checkpoint_mode && fs::exists(added_edges_path)) {
-        fs::remove(added_edges_path);
+        if (verbose) {
+            std::cout << "Concatenated clustered and unclustered SBM graphs, and added edges into: "
+                      << output_file << std::endl;
+        }
+
+        if (checkpoint_mode && fs::exists(added_edges_path)) {
+            fs::remove(added_edges_path);
+        }
     }
 
     if (verbose) {
