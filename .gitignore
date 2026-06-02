@@ -1,5 +1,8 @@
 eval_dir/
 
+# Claude settings
+CLAUDE.md
+.claude/
 
 # Santity check csvs
 start.csv
